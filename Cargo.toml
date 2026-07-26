@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "live-match-monitor",
+    "rss-feed-notifier",
+    "standings-tracker",
+    "pirate-utils"
+]
+
+# This ensures all your crates use the same dependency versions
+[workspace.dependencies]
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+serde_json = "1.0"
+dotenvy = "0.15"
