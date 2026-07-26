@@ -1,81 +1,93 @@
 use pirate_utils::send_discord_alert;
 use reqwest::blocking::Client;
-use scraper::{Html, Selector};
+use serde_json::Value;
 use std::fs;
-use std::path::Path; // 🏴‍☠️ Import the shared Captain Hook function!
+use std::path::Path;
+use std::thread;
+use std::time::Duration; // 🏴‍☠️ Import the shared Captain Hook function!
 
-const TARGET_URL: &str = "https://live.rugbyrama.fr/fr/1-directs/?ch=4";
+// The raw JSON API endpoint using Rugbyrama's exact internal filters
+const API_URL: &str = "https://api-live.rugbyrama.fr/api/videos?channel=4&limit=5&order=asc&order_by=event_date&status[]=running&status[]=pending&status[]=ready&status[]=scheduled&type[]=live";
+// The user-friendly link we will send in the Discord message
+const WEB_URL: &str = "https://live.rugbyrama.fr/fr/1-directs/?ch=4";
 const STATE_FILE: &str = "sl_state.txt";
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     // 1. Set up the client with a Pirate User-Agent to avoid getting blocked
     let client = Client::builder()
         .user_agent("NanterrePirates-Scraper/1.0")
-        .build()?;
+        .build()
+        .expect("Failed to build HTTP client");
 
-    // 2. Fetch the webpage
-    let response_text = client.get(TARGET_URL).send()?.text()?;
+    println!("🏴‍☠️ Live Match Monitor started. Checking the API every 5 minutes...");
 
-    // 3. Parse the HTML
-    let document = Html::parse_document(&response_text);
+    // The continuous 5-minute loop
+    loop {
+        if let Err(e) = check_rugbyrama_api(&client) {
+            eprintln!("⚠️ Error during API check: {}", e);
+        }
 
-    // Note: We use a broad selector here for the draft.
-    let body_selector = Selector::parse("body").unwrap();
+        // Sleep for 300 seconds (5 minutes) before the next check
+        thread::sleep(Duration::from_secs(300));
+    }
+}
 
-    let mut super_league_text = String::new();
+fn check_rugbyrama_api(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Fetch and automatically parse the JSON response
+    let json_response: Value = client.get(API_URL).send()?.json()?;
 
-    for element in document.select(&body_selector) {
-        let text = element.text().collect::<Vec<_>>().join(" ");
-        if text.contains("Super League") {
-            super_league_text = text;
-            break;
+    // 2. Safely extract the "items" array
+    let items = match json_response["items"].as_array() {
+        Some(arr) => arr,
+        None => return Ok(()), // If the API changes or returns no items, exit silently
+    };
+
+    let mut current_status = "unknown";
+
+    // 3. Loop through the matches to find what's happening
+    for item in items {
+        let status = item["status"].as_str().unwrap_or("unknown");
+
+        // The game is currently live
+        if status == "running" {
+            current_status = "live";
+            break; // A live game is the highest priority, stop looking!
+        }
+        // The game is upcoming ("Le coup d'envoi approche")
+        else if status == "pending" || status == "ready" || status == "scheduled" {
+            current_status = "scheduled";
+            // We don't break here, because there might be another match in the list that is currently "running"
         }
     }
 
-    // If there's no mention of Super League, we just exit silently.
-    if super_league_text.is_empty() {
-        return Ok(());
-    }
-
-    // 4. Determine the current status
-    let mut current_status = "unknown";
-
-    if super_league_text.contains("Le coup d'envoi approche") {
-        current_status = "scheduled";
-    } else if super_league_text.contains("en direct") || super_league_text.contains("Live") {
-        current_status = "live";
-    } else if super_league_text.contains("Super League") {
-        // Fallback: It's in the list, but doesn't have the specific tags yet
-        current_status = "listed";
-    }
-
-    // 5. Read the last known status from our state file
+    // 4. Read the last known status from our state file
     let last_status = if Path::new(STATE_FILE).exists() {
         fs::read_to_string(STATE_FILE).unwrap_or_default()
     } else {
         String::new()
     };
 
-    // 6. Compare and Alert!
+    // 5. Compare and Alert!
     if current_status != last_status && current_status != "unknown" {
-        // We now use Option<String> instead of just String
+        // We use Option<String> instead of an empty String for clean logic
         let message: Option<String> = match current_status {
-        "listed" | "scheduled" => {
-            Some(format!("🏴‍☠️ **Ahoy Pirates!** A new Super League match is on the schedule! Prepare your gear.\nCheck it here: {}", TARGET_URL))
-        },
-        "live" => {
-            Some(format!("⚔️ **THE GAME IS LIVE!** ⚔️\nThe Super League broadcast has officially started! Grab your rum and tune in now!\nLink: {}", TARGET_URL))
-        },
-        _ => None, // <-- Replaces String::new()
-    };
+            "scheduled" => {
+                Some(format!("🏴‍☠️ **Ahoy Pirates!** A new Super League match has been scheduled!\nCheck the broadcast room here: {}", WEB_URL))
+            },
+            "live" => {
+                Some(format!("⚔️ **THE GAME IS LIVE!** ⚔️\nThe Super League broadcast has officially started! Grab your rum and tune in now!\nLink: {}", WEB_URL))
+            },
+            _ => None,
+        };
 
         // "if let" cleanly checks if there is 'Some' message inside the Option
         if let Some(msg) = message {
             // Call the secure function from pirate-utils
-            send_discord_alert(&client, &msg)?;
+            send_discord_alert(client, &msg)?;
+            println!("Alert sent to Discord: {}", current_status);
         }
 
-        // Save the new status so we don't spam the channel on the next cron run
+        // Save the new status so we don't spam the channel on the next 5-minute loop
         fs::write(STATE_FILE, current_status)?;
     }
 

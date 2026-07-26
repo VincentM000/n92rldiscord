@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Pulls the version defined in the root workspace
 reqwest = { workspace = true }
 serde_json = { workspace = true }
-# Specific dependency for this program only
-scraper = "0.18" 
-# Link to your shared local library
 pirate-utils = { path = "../pirate-utils" }
