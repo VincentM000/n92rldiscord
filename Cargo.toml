@@ -4,6 +4,7 @@ members = [
     "live-match-monitor",
     "rss-feed-notifier",
     "standings-tracker",
+    "super-league-tracker",
     "pirate-utils"
 ]
 
