@@ -1,0 +1,9 @@
+[package]
+name = "super-league-tracker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { workspace = true }
+scraper = "0.27.0"
+pirate-utils = { path = "../pirate-utils" }
