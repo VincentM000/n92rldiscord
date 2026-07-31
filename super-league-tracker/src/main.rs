@@ -6,7 +6,8 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-const LADDER_URL: &str = "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
+const LADDER_URL: &str =
+    "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
 const STATE_FILE: &str = "sl_ladder_state.txt";
 
 // 🏴‍☠️ Standard emoji dictionary (no Discord configuration required)
@@ -67,7 +68,11 @@ fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::
 
     for row in document.select(&row_selector) {
         let team_name = match row.select(&team_link_selector).next() {
-            Some(link) => link.value().attr("aria-label").unwrap_or("Unknown").to_string(),
+            Some(link) => link
+                .value()
+                .attr("aria-label")
+                .unwrap_or("Unknown")
+                .to_string(),
             None => continue,
         };
 
@@ -91,7 +96,7 @@ fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::
                 "**{}.** {} **{}** • **{} pts** *(W:{} D:{} L:{})*\n",
                 index, emoji_str, team_name, points, wins, drawn, lost
             ));
-            
+
             index += 1;
         }
     }

@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use pirate_utils::send_discord_alert;
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -13,83 +14,120 @@ const WEB_URL: &str = "https://live.rugbyrama.fr/fr/1-directs/?ch=4";
 const STATE_FILE: &str = "sl_state.txt";
 
 fn main() {
-    // 1. Set up the client with a Pirate User-Agent to avoid getting blocked
     let client = Client::builder()
         .user_agent("NanterrePirates-Scraper/1.0")
         .build()
         .expect("Failed to build HTTP client");
 
-    println!("🏴‍☠️ Live Match Monitor started. Checking the API every 5 minutes...");
+    println!("🏴‍☠️ Stealth Live Match Monitor started. Using adaptive radar to avoid bans...");
 
-    // The continuous 5-minute loop
+    // The dynamic loop
     loop {
-        if let Err(e) = check_rugbyrama_api(&client) {
-            eprintln!("⚠️ Error during API check: {}", e);
-        }
+        let sleep_duration = match check_rugbyrama_api(&client) {
+            Ok(duration) => duration,
+            Err(e) => {
+                eprintln!(
+                    "⚠️ Error during API check: {}. Falling back to 10 min sleep.",
+                    e
+                );
+                Duration::from_secs(600) // Default to 10 mins on error
+            }
+        };
 
-        // Sleep for 300 seconds (5 minutes) before the next check
-        thread::sleep(Duration::from_secs(300));
+        println!(
+            "💤 Sleeping for {} seconds before the next check...",
+            sleep_duration.as_secs()
+        );
+        thread::sleep(sleep_duration);
     }
 }
 
-fn check_rugbyrama_api(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Fetch and automatically parse the JSON response
+fn check_rugbyrama_api(client: &Client) -> Result<Duration, Box<dyn std::error::Error>> {
     let json_response: Value = client.get(API_URL).send()?.json()?;
 
-    // 2. Safely extract the "items" array
     let items = match json_response["items"].as_array() {
         Some(arr) => arr,
-        None => return Ok(()), // If the API changes or returns no items, exit silently
+        None => return Ok(Duration::from_secs(600)), // No matches? Sleep 10 minutes
     };
 
     let mut current_status = "unknown";
+    let mut closest_match_in_secs: Option<i64> = None;
 
-    // 3. Loop through the matches to find what's happening
     for item in items {
         let status = item["status"].as_str().unwrap_or("unknown");
 
-        // The game is currently live
+        // Analyze the time for ALL matches to find the closest one
+        if let Some(date_str) = item["event_date"].as_str() {
+            if let Ok(event_date) = date_str.parse::<DateTime<Utc>>() {
+                let now = Utc::now();
+                let seconds_until = event_date.signed_duration_since(now).num_seconds();
+
+                if seconds_until > 0 {
+                    // Keep track of the match that is starting the soonest
+                    closest_match_in_secs = match closest_match_in_secs {
+                        Some(current_min) => Some(current_min.min(seconds_until)),
+                        None => Some(seconds_until),
+                    };
+                }
+            }
+        }
+
         if status == "running" {
             current_status = "live";
-            break; // A live game is the highest priority, stop looking!
-        }
-        // The game is upcoming ("Le coup d'envoi approche")
-        else if status == "pending" || status == "ready" || status == "scheduled" {
-            current_status = "scheduled";
-            // We don't break here, because there might be another match in the list that is currently "running"
+            // We don't break immediately anymore because we still want to calculate closest_match_in_secs for other potential matches
+        } else if status == "pending" || status == "ready" || status == "scheduled" {
+            if current_status != "live" && current_status != "about_to_start" {
+                current_status = "scheduled";
+            }
         }
     }
 
-    // 4. Read the last known status from our state file
+    // Determine if any match is exactly in the "1 minute" window
+    if let Some(secs) = closest_match_in_secs {
+        if secs <= 60 && secs > 0 && current_status != "live" {
+            current_status = "about_to_start";
+        }
+    }
+
+    // 🏴‍☠️ SMART POLLING LOGIC
+    let mut next_sleep_secs = 600; // Default sleep is 10 minutes
+
+    if let Some(secs_to_match) = closest_match_in_secs {
+        if secs_to_match > 65 && secs_to_match < 600 {
+            // Wake up exactly 62 seconds before the match starts to catch the 1-minute window safely
+            next_sleep_secs = secs_to_match - 62;
+        } else if secs_to_match <= 65 {
+            // If we are very close to start (or just alerted), sleep for 30 seconds to catch the transition to "live"
+            next_sleep_secs = 30;
+        }
+    }
+
+    if current_status == "live" {
+        // Once live, checking every 10 minutes is enough until it ends
+        next_sleep_secs = 600;
+    }
+
     let last_status = if Path::new(STATE_FILE).exists() {
         fs::read_to_string(STATE_FILE).unwrap_or_default()
     } else {
         String::new()
     };
 
-    // 5. Compare and Alert!
     if current_status != last_status && current_status != "unknown" {
-        // We use Option<String> instead of an empty String for clean logic
         let message: Option<String> = match current_status {
-            "scheduled" => {
-                Some(format!("🏴‍☠️ **Ahoy Pirates!** A new Super League match has been scheduled!\nCheck the broadcast room here: {}", WEB_URL))
-            },
-            "live" => {
-                Some(format!("⚔️ **THE GAME IS LIVE!** ⚔️\nThe Super League broadcast has officially started! Grab your rum and tune in now!\nLink: {}", WEB_URL))
-            },
+            "scheduled" => Some(format!("🏴‍☠️ **Ahoy Pirates!** A new Super League match has been scheduled!\nCheck the broadcast room here: {}", WEB_URL)),
+            "about_to_start" => Some(format!("⏰ **ALERTE IMMINENTE !** Le coup d'envoi approche, le match commence dans une minute ! Soyez prêts : {}", WEB_URL)),
+            "live" => Some(format!("⚔️ **THE GAME IS LIVE!** ⚔️\nThe Super League broadcast has officially started! Grab your rum and tune in now!\nLink: {}", WEB_URL)),
             _ => None,
         };
 
-        // "if let" cleanly checks if there is 'Some' message inside the Option
         if let Some(msg) = message {
-            // Call the secure function from pirate-utils
             send_discord_alert(client, &msg)?;
             println!("Alert sent to Discord: {}", current_status);
         }
 
-        // Save the new status so we don't spam the channel on the next 5-minute loop
         fs::write(STATE_FILE, current_status)?;
     }
 
-    Ok(())
+    Ok(Duration::from_secs(next_sleep_secs as u64))
 }
