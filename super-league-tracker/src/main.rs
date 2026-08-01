@@ -6,7 +6,8 @@ const LADDER_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
 const RESULTS_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/super-league/results";
-const STATE_FILE: &str = "sl_ladder_state.txt";
+const SL_STATE_FILE: &str = "sl_ladder_state.txt";
+const SL_MATCH_STATE_FILE: &str = "sl_match_state.txt";
 
 fn get_sl_team_emoji(team_name: &str) -> &str {
     match team_name {
@@ -38,7 +39,11 @@ impl LadderTracker for SuperLeagueTracker {
     }
 
     fn state_filename(&self) -> &str {
-        STATE_FILE
+        SL_STATE_FILE
+    }
+
+    fn match_state_filename(&self) -> &str {
+        SL_MATCH_STATE_FILE
     }
 
     fn fetch_latest_match_result(

@@ -5,7 +5,8 @@ use scraper::{Html, Selector};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
 
-const STATE_FILE: &str = "ladder_state.txt";
+const NRL_STATE_FILE: &str = "nrl_ladder_state.txt";
+const NRL_MATCH_STATE_FILE: &str = "nrl_match_state.txt";
 
 fn get_current_season() -> i32 {
     chrono::Utc::now().year()
@@ -60,7 +61,11 @@ impl LadderTracker for NrlTracker {
     }
 
     fn state_filename(&self) -> &str {
-        STATE_FILE
+        NRL_STATE_FILE
+    }
+
+    fn match_state_filename(&self) -> &str {
+        NRL_MATCH_STATE_FILE
     }
 
     fn fetch_latest_match_result(
