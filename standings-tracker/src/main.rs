@@ -15,11 +15,9 @@ fn get_current_season() -> i32 {
 
 fn get_sleep_duration() -> std::time::Duration {
     let weekday = chrono::Utc::now().weekday();
-    // NRL match days are Thursday through Sunday/Monday.
-    // On off-days (Tue, Wed), standings don't change, so sleep 1 hour (3600s).
     let base_secs = match weekday {
         Weekday::Tue | Weekday::Wed => 3600,
-        _ => 600, // 10 minutes on match days
+        _ => 600,
     };
     apply_jitter(base_secs)
 }
@@ -27,9 +25,7 @@ fn get_sleep_duration() -> std::time::Duration {
 fn main() {
     env_logger::init();
 
-    info!(
-        "🏴‍☠️ Hoisting the colors! The Standings Tracker will check the horizon with smart adaptive scheduling..."
-    );
+    info!("Standings Tracker started.");
 
     let client = Client::builder()
         .user_agent("NanterrePirates-Scraper/1.0")
@@ -38,7 +34,7 @@ fn main() {
 
     loop {
         if let Err(e) = check_ladder(&client) {
-            warn!("⚠️ Arrr! Hit a reef: {}", e);
+            warn!("Error checking ladder: {}", e);
         }
 
         let sleep_duration = get_sleep_duration();
@@ -46,7 +42,6 @@ fn main() {
     }
 }
 
-// 🏴‍☠️ Dictionary mapping theme keys to your custom Discord emojis
 fn get_team_emoji(theme_key: &str) -> &str {
     match theme_key {
         "panthers" => "<:panthers:1531243678763323512>",
@@ -66,11 +61,10 @@ fn get_team_emoji(theme_key: &str) -> &str {
         "eels" => "<:eels:1531242628665049198>",
         "wests-tigers" => "<:weststigers:1531243671729471538>",
         "dragons" => "<:dragons:1531242582405943337>",
-        _ => "🏉", // Default emoji if key is not found
+        _ => "🏉",
     }
 }
 
-// 🏴‍☠️ Recursive hunter: Scans any JSON structure to find match fixtures
 fn find_all_fixtures(value: &Value, fixtures: &mut Vec<Value>) {
     if let Some(obj) = value.as_object() {
         if obj.contains_key("matchState")
@@ -89,7 +83,6 @@ fn find_all_fixtures(value: &Value, fixtures: &mut Vec<Value>) {
     }
 }
 
-// Function to fetch the latest match result, completely bypassing cache and structural changes
 fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -215,22 +208,22 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
 
     if current_ladder != last_ladder {
         if !last_ladder.is_empty() {
-            info!("🏴‍☠️ The ladder has shifted! Fetching the latest match result...");
+            info!("Ladder change detected. Fetching latest match result...");
             match get_latest_match_result(client) {
                 Ok(Some(result_message)) => {
                     if let Err(e) = send_discord_alert(client, &result_message) {
-                        warn!("⚠️ Arrr! Failed to send match result: {}", e);
+                        warn!("Failed to send match result: {}", e);
                     }
 
-                    info!("⏳ Pausing for 2 seconds to ensure correct message order on Discord...");
+                    info!("Pausing 2 seconds for message sequencing...");
                     thread::sleep(Duration::from_secs(2));
                 }
-                Ok(None) => info!("⚠️ No recent match result found on the page."),
-                Err(e) => warn!("⚠️ Error fetching match result: {}", e),
+                Ok(None) => info!("No recent match result found on page."),
+                Err(e) => warn!("Error fetching match result: {}", e),
             }
         }
 
-        info!("🏴‍☠️ Firing ladder message to Discord...");
+        info!("Sending updated ladder to Discord...");
         send_discord_alert(client, &current_ladder)?;
     }
 
