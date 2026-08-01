@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
 
 const LADDER_URL: &str = "https://www.nrl.com/ladder/?competition=111&season=2026";
 const HOME_URL: &str = "https://www.nrl.com/";
@@ -56,29 +57,38 @@ fn get_team_emoji(theme_key: &str) -> &str {
     }
 }
 
-// Function to fetch the latest match result from the NRL homepage
+// Function to fetch the latest match result from the NRL homepage, bypassing the CDN cache
 fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    // 1. Fetch the raw HTML from the homepage
-    let html_content = client.get(HOME_URL).send()?.text()?;
+    // 1. Generate a unique timestamp for Cache-Busting
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+
+    // 2. Create the stealth URL (e.g., https://www.nrl.com/?_t=123456789)
+    let stealth_url = format!("{}?_t={}", HOME_URL, timestamp);
+
+    // 3. Fetch the FRESH raw HTML from the homepage using the stealth URL
+    let html_content = client.get(&stealth_url).send()?.text()?;
     let document = Html::parse_document(&html_content);
 
-    // 2. Select the div containing the scoreboard data
+    // 4. Select the div containing the scoreboard data
     let selector = Selector::parse("#vue-draw-overview").unwrap();
     let element = document
         .select(&selector)
         .next()
         .ok_or("Could not find #vue-draw-overview div in HTML")?;
 
-    // 3. Extract the JSON string from the "q-data" attribute
+    // 5. Extract the JSON string from the "q-data" attribute
     let json_str = element
         .value()
         .attr("q-data")
         .ok_or("Could not find q-data attribute")?;
 
-    // 4. Parse the JSON
+    // 6. Parse the JSON
     let json_data: Value = serde_json::from_str(json_str)?;
 
-    // 5. Navigate to the fixtures array
+    // 7. Navigate to the fixtures array
     let competitions = json_data["competitions"]
         .as_array()
         .ok_or("Could not find competitions array in JSON")?;
@@ -88,7 +98,7 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
         .and_then(|c| c["fixtures"].as_array())
         .ok_or("Could not find fixtures array in JSON")?;
 
-    // 6. Iterate backwards to find the most recently completed match ("FullTime")
+    // 8. Iterate backwards to find the most recently completed match ("FullTime")
     for fixture in fixtures.iter().rev() {
         if fixture["matchState"].as_str() == Some("FullTime") {
             let home_team = fixture["homeTeam"]["nickName"]
