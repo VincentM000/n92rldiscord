@@ -9,7 +9,8 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
 
 const LADDER_URL: &str = "https://www.nrl.com/ladder/?competition=111&season=2026";
-const HOME_URL: &str = "https://www.nrl.com/";
+// 🏴‍☠️ We target the Draw page instead of the Home page to bypass strict root caching
+const DRAW_URL: &str = "https://www.nrl.com/draw/?competition=111&season=2026";
 const STATE_FILE: &str = "ladder_state.txt";
 
 fn main() {
@@ -57,7 +58,29 @@ fn get_team_emoji(theme_key: &str) -> &str {
     }
 }
 
-// Function to fetch the latest match result from the NRL homepage, bypassing the CDN cache
+// 🏴‍☠️ Recursive hunter: Scans any JSON structure to find match fixtures
+fn find_all_fixtures(value: &Value, fixtures: &mut Vec<Value>) {
+    if let Some(obj) = value.as_object() {
+        // If this object has the traits of a match fixture, capture it!
+        if obj.contains_key("matchState")
+            && obj.contains_key("homeTeam")
+            && obj.contains_key("awayTeam")
+        {
+            fixtures.push(value.clone());
+        }
+        // Keep digging deeper into the object
+        for (_, v) in obj {
+            find_all_fixtures(v, fixtures);
+        }
+    } else if let Some(arr) = value.as_array() {
+        // Dig into arrays
+        for v in arr {
+            find_all_fixtures(v, fixtures);
+        }
+    }
+}
+
+// Function to fetch the latest match result, completely bypassing cache and structural changes
 fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn std::error::Error>> {
     // 1. Generate a unique timestamp for Cache-Busting
     let timestamp = SystemTime::now()
@@ -65,41 +88,32 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
         .unwrap()
         .as_millis();
 
-    // 2. Create the stealth URL (e.g., https://www.nrl.com/?_t=123456789)
-    let stealth_url = format!("{}?_t={}", HOME_URL, timestamp);
+    // 2. Create the stealth URL using the Draw page (Note the & instead of ? for the parameter)
+    let stealth_url = format!("{}&_t={}", DRAW_URL, timestamp);
 
-    // 3. Fetch the FRESH raw HTML from the homepage using the stealth URL
+    // 3. Fetch the FRESH raw HTML from the stealth URL
     let html_content = client.get(&stealth_url).send()?.text()?;
     let document = Html::parse_document(&html_content);
 
-    // 4. Select the div containing the scoreboard data
-    let selector = Selector::parse("#vue-draw-overview").unwrap();
-    let element = document
-        .select(&selector)
-        .next()
-        .ok_or("Could not find #vue-draw-overview div in HTML")?;
+    // 4. We don't rely on specific IDs anymore. We grab ALL elements with a "q-data" attribute.
+    let selector = Selector::parse("[q-data]").unwrap();
+    let mut all_fixtures = Vec::new();
 
-    // 5. Extract the JSON string from the "q-data" attribute
-    let json_str = element
-        .value()
-        .attr("q-data")
-        .ok_or("Could not find q-data attribute")?;
+    for element in document.select(&selector) {
+        if let Some(json_str) = element.value().attr("q-data") {
+            // Attempt to parse the JSON. If it works, hunt for fixtures inside it.
+            if let Ok(json_data) = serde_json::from_str::<Value>(json_str) {
+                find_all_fixtures(&json_data, &mut all_fixtures);
+            }
+        }
+    }
 
-    // 6. Parse the JSON
-    let json_data: Value = serde_json::from_str(json_str)?;
+    // 5. Look for the most recently completed match
+    let mut last_fulltime_message = None;
 
-    // 7. Navigate to the fixtures array
-    let competitions = json_data["competitions"]
-        .as_array()
-        .ok_or("Could not find competitions array in JSON")?;
-
-    let fixtures = competitions
-        .get(0)
-        .and_then(|c| c["fixtures"].as_array())
-        .ok_or("Could not find fixtures array in JSON")?;
-
-    // 8. Iterate backwards to find the most recently completed match ("FullTime")
-    for fixture in fixtures.iter().rev() {
+    // By iterating through all found fixtures, the last one in the document
+    // marked as "FullTime" will be the most recent one played in this round.
+    for fixture in all_fixtures {
         if fixture["matchState"].as_str() == Some("FullTime") {
             let home_team = fixture["homeTeam"]["nickName"]
                 .as_str()
@@ -121,16 +135,14 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
             let emoji_away = get_team_emoji(away_theme);
 
             // This message goes to Discord, so it's in French
-            let message = format!(
+            last_fulltime_message = Some(format!(
                 "🏁 **RÉSULTAT FINAL :**\n{} **{}** {} - {} **{}** {}",
                 emoji_home, home_team, home_score, away_score, away_team, emoji_away
-            );
-
-            return Ok(Some(message));
+            ));
         }
     }
 
-    Ok(None)
+    Ok(last_fulltime_message)
 }
 
 fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
@@ -225,7 +237,7 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
                     );
                     thread::sleep(Duration::from_secs(2));
                 }
-                Ok(None) => println!("⚠️ No recent match result found on the homepage."),
+                Ok(None) => println!("⚠️ No recent match result found on the page."),
                 Err(e) => eprintln!("⚠️ Error fetching match result: {}", e),
             }
         }
