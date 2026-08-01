@@ -1,14 +1,25 @@
-use pirate_utils::{load_state, save_state, send_discord_alert};
+use chrono::{Datelike, Weekday};
+use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use std::thread;
-use std::time::Duration;
 
 const LADDER_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
 const RESULTS_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/super-league/results";
 const STATE_FILE: &str = "sl_ladder_state.txt";
+
+fn get_sleep_duration() -> std::time::Duration {
+    let weekday = chrono::Utc::now().weekday();
+    // Super League match days are Thursday through Sunday/Monday.
+    // On off-days (Tue, Wed), standings don't change, so sleep 1 hour (3600s).
+    let base_secs = match weekday {
+        Weekday::Tue | Weekday::Wed => 3600,
+        _ => 600, // 10 minutes on match days
+    };
+    apply_jitter(base_secs)
+}
 
 // 🏴‍☠️ Standard emoji dictionary (no Discord configuration required)
 fn get_sl_team_emoji(team_name: &str) -> &str {
@@ -34,21 +45,20 @@ fn get_sl_team_emoji(team_name: &str) -> &str {
 }
 
 fn main() {
-    println!("🏴‍☠️ Hoisting the colors! The Super League Tracker will check the horizon every 10 minutes...");
+    println!("🏴‍☠️ Hoisting the colors! The Super League Tracker will check the horizon with smart adaptive scheduling...");
 
     let client = Client::builder()
         .user_agent("NanterrePirates-Scraper/1.0")
         .build()
         .expect("Failed to build HTTP client");
 
-    // The continuous 10-minute loop
     loop {
         if let Err(e) = check_super_league_ladder(&client) {
             eprintln!("⚠️ Arrr! Hit a reef: {}", e);
         }
 
-        // Sleep for 600 seconds (10 minutes) before the next check
-        thread::sleep(Duration::from_secs(600));
+        let sleep_duration = get_sleep_duration();
+        thread::sleep(sleep_duration);
     }
 }
 

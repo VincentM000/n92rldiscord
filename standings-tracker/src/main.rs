@@ -1,11 +1,10 @@
-use chrono::Datelike;
-use pirate_utils::{load_state, save_state, send_discord_alert};
+use chrono::{Datelike, Weekday};
+use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use serde_json::Value;
 use std::thread;
-use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
+use std::time::{Duration, SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
 
 const STATE_FILE: &str = "ladder_state.txt";
 
@@ -13,9 +12,20 @@ fn get_current_season() -> i32 {
     chrono::Utc::now().year()
 }
 
+fn get_sleep_duration() -> std::time::Duration {
+    let weekday = chrono::Utc::now().weekday();
+    // NRL match days are Thursday through Sunday/Monday.
+    // On off-days (Tue, Wed), standings don't change, so sleep 1 hour (3600s).
+    let base_secs = match weekday {
+        Weekday::Tue | Weekday::Wed => 3600,
+        _ => 600, // 10 minutes on match days
+    };
+    apply_jitter(base_secs)
+}
+
 fn main() {
     println!(
-        "🏴‍☠️ Hoisting the colors! The Standings Tracker will check the horizon every 10 minutes..."
+        "🏴‍☠️ Hoisting the colors! The Standings Tracker will check the horizon with smart adaptive scheduling..."
     );
 
     let client = Client::builder()
@@ -23,14 +33,13 @@ fn main() {
         .build()
         .expect("Failed to build HTTP client");
 
-    // The continuous 10-minute loop
     loop {
         if let Err(e) = check_ladder(&client) {
             eprintln!("⚠️ Arrr! Hit a reef: {}", e);
         }
 
-        // Sleep for 600 seconds (10 minutes) before the next check
-        thread::sleep(Duration::from_secs(600));
+        let sleep_duration = get_sleep_duration();
+        thread::sleep(sleep_duration);
     }
 }
 

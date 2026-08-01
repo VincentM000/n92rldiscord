@@ -1,11 +1,19 @@
-use pirate_utils::{load_state, save_state, send_discord_alert};
+use chrono::Timelike;
+use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use rss::Channel;
 use std::thread;
-use std::time::Duration;
 
 const FEED_URL: &str = "https://treizemondial.fr/feed/";
 const STATE_FILE: &str = "last_article_url.txt";
+
+fn get_sleep_duration() -> std::time::Duration {
+    let hour = chrono::Utc::now().hour();
+    // Daytime (06:00 - 22:00 UTC): check every 5 minutes (300s)
+    // Overnight (22:00 - 06:00 UTC): check every 30 minutes (1800s)
+    let base_secs = if (6..22).contains(&hour) { 300 } else { 1800 };
+    apply_jitter(base_secs)
+}
 
 fn main() {
     let client = Client::builder()
@@ -13,14 +21,15 @@ fn main() {
         .build()
         .expect("Failed to build HTTP client");
 
-    println!("🏴‍☠️ RSS Feed Notifier started. Checking Treize Mondial every 5 minutes...");
+    println!("🏴‍☠️ RSS Feed Notifier started with smart day/night polling and jitter...");
 
     loop {
         if let Err(e) = check_rss_feed(&client) {
             eprintln!("⚠️ Error checking RSS feed: {}", e);
         }
 
-        thread::sleep(Duration::from_secs(300));
+        let sleep_duration = get_sleep_duration();
+        thread::sleep(sleep_duration);
     }
 }
 
