@@ -61,17 +61,31 @@ pub fn run_tracker_loop<T: LadderTracker>(tracker: T) {
                         let last_match = load_state(tracker.match_state_filename());
 
                         if let Some(ref match_msg) = current_match {
-                            // On bloque si le match n'est pas encore mis à jour en ligne
+                            // On bloque si le fichier global n'a pas bougé d'un iota
                             if match_msg == &last_match && !last_match.is_empty() {
-                                log::info!("⏳ Classement modifié, mais le score n'est pas à jour. On patiente...");
-                                thread::sleep(Duration::from_secs(600)); // Attente avant de relancer la boucle
+                                log::info!("⏳ Classement modifié, mais aucun nouveau score détecté. On patiente...");
+                                thread::sleep(Duration::from_secs(600));
                                 continue;
                             }
 
-                            // Nouveau match confirmé, on tire !
-                            let _ = send_discord_alert(&client, match_msg);
+                            let mut has_new_match = false;
+
+                            // ⚓ LA MAGIE EST ICI : On découpe le filet et on cherche les prises inédites !
+                            for single_match in match_msg.split("|||") {
+                                if !last_match.contains(single_match) {
+                                    has_new_match = true;
+                                    let _ = send_discord_alert(&client, single_match);
+                                    thread::sleep(Duration::from_secs(2));
+                                }
+                            }
+
+                            // Si finalement tous les matchs étaient déjà dans l'historique (faux positif)
+                            if !has_new_match && !last_match.is_empty() {
+                                continue;
+                            }
+
+                            // On sauvegarde le nouveau filet complet
                             let _ = save_state(tracker.match_state_filename(), match_msg);
-                            thread::sleep(Duration::from_secs(2));
                         }
                     }
                 }

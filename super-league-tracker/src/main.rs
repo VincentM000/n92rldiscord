@@ -53,25 +53,28 @@ impl LadderTracker for SuperLeagueTracker {
         let response = client.get(RESULTS_URL).send()?.text()?;
         let document = Html::parse_document(&response);
 
-        let match_selector = Selector::parse(".fixres__item .matches__link").unwrap();
+        let match_selector =
+            Selector::parse(".fixres__item .matches__link[data-status=\"FT\"]").unwrap();
         let team1_selector = Selector::parse(".matches__participant--side1").unwrap();
         let team2_selector = Selector::parse(".matches__participant--side2").unwrap();
         let score_selector = Selector::parse(".matches__teamscores-side").unwrap();
 
-        if let Some(first_match) = document.select(&match_selector).next() {
-            let team1 = first_match
+        let mut all_ft_matches = Vec::new();
+
+        for match_node in document.select(&match_selector) {
+            let team1 = match_node
                 .select(&team1_selector)
                 .next()
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
-            let team2 = first_match
+            let team2 = match_node
                 .select(&team2_selector)
                 .next()
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
-            let scores: Vec<String> = first_match
+            let scores: Vec<String> = match_node
                 .select(&score_selector)
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .collect();
@@ -87,8 +90,12 @@ impl LadderTracker for SuperLeagueTracker {
                     "🏁 **RÉSULTAT FINAL :**\n{} **{}** {} - {} **{}** {}",
                     emoji1, team1, score1, score2, team2, emoji2
                 );
-                return Ok(Some(message));
+                all_ft_matches.push(message);
             }
+        }
+
+        if !all_ft_matches.is_empty() {
+            return Ok(Some(all_ft_matches.join("|||")));
         }
 
         Ok(None)
