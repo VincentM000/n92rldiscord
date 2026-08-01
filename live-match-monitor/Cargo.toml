@@ -1,0 +1,10 @@
+[package]
+name = "live-match-monitor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+pirate-utils = { path = "../pirate-utils" }
