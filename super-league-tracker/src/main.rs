@@ -8,6 +8,8 @@ use std::time::Duration;
 
 const LADDER_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
+const RESULTS_URL: &str =
+    "https://www.skysports.com/rugby-league/competitions/super-league/results";
 const STATE_FILE: &str = "sl_ladder_state.txt";
 
 // 🏴‍☠️ Standard emoji dictionary (no Discord configuration required)
@@ -50,6 +52,59 @@ fn main() {
         // Sleep for 600 seconds (10 minutes) before the next check
         thread::sleep(Duration::from_secs(600));
     }
+}
+
+// Fonction pour récupérer le dernier résultat sur Sky Sports
+fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    // 1. Récupérer le code HTML de la page des résultats
+    let response = client.get(RESULTS_URL).send()?.text()?;
+    let document = Html::parse_document(&response);
+
+    // 2. Préparer nos grappins (Sélecteurs CSS)
+    let match_selector = Selector::parse(".fixres__item .matches__link").unwrap();
+    let team1_selector = Selector::parse(".matches__participant--side1").unwrap();
+    let team2_selector = Selector::parse(".matches__participant--side2").unwrap();
+    let score_selector = Selector::parse(".matches__teamscores-side").unwrap();
+
+    // 3. On ne prend que le TOUT PREMIER match de la liste (le plus récent)
+    if let Some(first_match) = document.select(&match_selector).next() {
+        // Extraction des noms des équipes
+        let team1 = first_match
+            .select(&team1_selector)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        let team2 = first_match
+            .select(&team2_selector)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        // Extraction des scores
+        let scores: Vec<String> = first_match
+            .select(&score_selector)
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .collect();
+
+        // 4. Si on a bien récupéré les deux scores, on assemble le message
+        if scores.len() >= 2 {
+            let score1 = &scores[0];
+            let score2 = &scores[1];
+
+            // Formatage du message Discord avec les émojis
+            let emoji1 = get_sl_team_emoji(&team1);
+            let emoji2 = get_sl_team_emoji(&team2);
+
+            let message = format!(
+                "🏁 **RÉSULTAT FINAL :**\n{} **{}** {} - {} **{}** {}",
+                emoji1, team1, score1, score2, team2, emoji2
+            );
+            return Ok(Some(message));
+        }
+    }
+
+    Ok(None)
 }
 
 fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
@@ -110,7 +165,22 @@ fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::
 
     // 6. Compare and Alert if the ladder has changed
     if current_ladder != last_ladder && !current_ladder.is_empty() {
-        println!("🏴‍☠️ The Super League ladder has shifted! Firing message to Discord...");
+        // On s'assure que ce n'est pas le tout premier lancement (last_ladder vide) pour éviter d'envoyer un vieux score
+        if !last_ladder.is_empty() {
+            println!("🏴‍☠️ The Super League ladder has shifted! Fetching the latest match result...");
+            match get_latest_match_result(client) {
+                Ok(Some(result_message)) => {
+                    // On envoie le score final
+                    if let Err(e) = send_discord_alert(client, &result_message) {
+                        eprintln!("⚠️ Arrr! Failed to send match result: {}", e);
+                    }
+                }
+                Ok(None) => println!("⚠️ No recent match result found on the page."),
+                Err(e) => eprintln!("⚠️ Error fetching match result: {}", e),
+            }
+        }
+
+        println!("🏴‍☠️ Firing ladder message to Discord...");
         send_discord_alert(client, &current_ladder)?;
     }
 
