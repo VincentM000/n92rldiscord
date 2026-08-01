@@ -1,3 +1,5 @@
+pub mod ladder_tracker;
+
 use dotenvy::dotenv;
 use reqwest::blocking::Client;
 use serde_json::json;

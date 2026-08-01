@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "live-match-monitor",
     "rss-feed-notifier",
-    "standings-tracker",
+    "nrl-tracker",
     "super-league-tracker",
     "pirate-utils"
 ]

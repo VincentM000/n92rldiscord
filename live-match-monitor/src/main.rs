@@ -67,10 +67,11 @@ fn check_rugbyrama_api(client: &Client) -> Result<Duration, Box<dyn std::error::
 
         if status == "running" {
             current_status = "live";
-        } else if status == "pending" || status == "ready" || status == "scheduled" {
-            if current_status != "live" && current_status != "about_to_start" {
-                current_status = "scheduled";
-            }
+        } else if (status == "pending" || status == "ready" || status == "scheduled")
+            && current_status != "live"
+            && current_status != "about_to_start"
+        {
+            current_status = "scheduled";
         }
     }
 
