@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use log::{info, warn};
 use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -12,12 +13,14 @@ const WEB_URL: &str = "https://live.rugbyrama.fr/fr/1-directs/?ch=4";
 const STATE_FILE: &str = "sl_state.txt";
 
 fn main() {
+    env_logger::init();
+
     let client = Client::builder()
         .user_agent("NanterrePirates-Scraper/1.0")
         .build()
         .expect("Failed to build HTTP client");
 
-    println!(
+    info!(
         "🏴‍☠️ Stealth Live Match Monitor started. Using adaptive radar with jitter to avoid bans..."
     );
 
@@ -26,7 +29,7 @@ fn main() {
         let sleep_duration = match check_rugbyrama_api(&client) {
             Ok(duration) => duration,
             Err(e) => {
-                eprintln!(
+                warn!(
                     "⚠️ Error during API check: {}. Falling back to 10 min sleep.",
                     e
                 );
@@ -34,7 +37,7 @@ fn main() {
             }
         };
 
-        println!(
+        info!(
             "💤 Sleeping for {} seconds before the next check...",
             sleep_duration.as_secs()
         );
@@ -124,7 +127,7 @@ fn check_rugbyrama_api(client: &Client) -> Result<Duration, Box<dyn std::error::
 
         if let Some(msg) = message {
             send_discord_alert(client, &msg)?;
-            println!("Alert sent to Discord: {}", current_status);
+            info!("Alert sent to Discord: {}", current_status);
         }
 
         save_state(STATE_FILE, current_status)?;

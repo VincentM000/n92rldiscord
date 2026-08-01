@@ -1,4 +1,5 @@
 use chrono::Timelike;
+use log::{info, warn};
 use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use rss::Channel;
@@ -16,16 +17,18 @@ fn get_sleep_duration() -> std::time::Duration {
 }
 
 fn main() {
+    env_logger::init();
+
     let client = Client::builder()
         .user_agent("NanterrePirates-RSS/1.0")
         .build()
         .expect("Failed to build HTTP client");
 
-    println!("🏴‍☠️ RSS Feed Notifier started with smart day/night polling and jitter...");
+    info!("🏴‍☠️ RSS Feed Notifier started with smart day/night polling and jitter...");
 
     loop {
         if let Err(e) = check_rss_feed(&client) {
-            eprintln!("⚠️ Error checking RSS feed: {}", e);
+            warn!("⚠️ Error checking RSS feed: {}", e);
         }
 
         let sleep_duration = get_sleep_duration();
@@ -69,7 +72,7 @@ fn check_rss_feed(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
 
         // Call the secure function from pirate-utils
         send_discord_alert(client, &message)?;
-        println!("Alert sent to Discord: {}", latest_title);
+        info!("Alert sent to Discord: {}", latest_title);
     }
 
     // Always save the latest link so we establish our baseline (even on the first run)

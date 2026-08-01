@@ -1,10 +1,11 @@
 use chrono::{Datelike, Weekday};
+use log::{info, warn};
 use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use serde_json::Value;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const STATE_FILE: &str = "ladder_state.txt";
 
@@ -24,7 +25,9 @@ fn get_sleep_duration() -> std::time::Duration {
 }
 
 fn main() {
-    println!(
+    env_logger::init();
+
+    info!(
         "🏴‍☠️ Hoisting the colors! The Standings Tracker will check the horizon with smart adaptive scheduling..."
     );
 
@@ -35,7 +38,7 @@ fn main() {
 
     loop {
         if let Err(e) = check_ladder(&client) {
-            eprintln!("⚠️ Arrr! Hit a reef: {}", e);
+            warn!("⚠️ Arrr! Hit a reef: {}", e);
         }
 
         let sleep_duration = get_sleep_duration();
@@ -70,19 +73,16 @@ fn get_team_emoji(theme_key: &str) -> &str {
 // 🏴‍☠️ Recursive hunter: Scans any JSON structure to find match fixtures
 fn find_all_fixtures(value: &Value, fixtures: &mut Vec<Value>) {
     if let Some(obj) = value.as_object() {
-        // If this object has the traits of a match fixture, capture it!
         if obj.contains_key("matchState")
             && obj.contains_key("homeTeam")
             && obj.contains_key("awayTeam")
         {
             fixtures.push(value.clone());
         }
-        // Keep digging deeper into the object
         for (_, v) in obj {
             find_all_fixtures(v, fixtures);
         }
     } else if let Some(arr) = value.as_array() {
-        // Dig into arrays
         for v in arr {
             find_all_fixtures(v, fixtures);
         }
@@ -91,13 +91,11 @@ fn find_all_fixtures(value: &Value, fixtures: &mut Vec<Value>) {
 
 // Function to fetch the latest match result, completely bypassing cache and structural changes
 fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    // 1. Generate a unique timestamp for Cache-Busting
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
 
-    // 2. Create the stealth URL using the Draw page with the current season dynamically
     let season = get_current_season();
     let draw_url = format!(
         "https://www.nrl.com/draw/?competition=111&season={}",
@@ -105,28 +103,22 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
     );
     let stealth_url = format!("{}&_t={}", draw_url, timestamp);
 
-    // 3. Fetch the FRESH raw HTML from the stealth URL
     let html_content = client.get(&stealth_url).send()?.text()?;
     let document = Html::parse_document(&html_content);
 
-    // 4. We don't rely on specific IDs anymore. We grab ALL elements with a "q-data" attribute.
     let selector = Selector::parse("[q-data]").unwrap();
     let mut all_fixtures = Vec::new();
 
     for element in document.select(&selector) {
         if let Some(json_str) = element.value().attr("q-data") {
-            // Attempt to parse the JSON. If it works, hunt for fixtures inside it.
             if let Ok(json_data) = serde_json::from_str::<Value>(json_str) {
                 find_all_fixtures(&json_data, &mut all_fixtures);
             }
         }
     }
 
-    // 5. Look for the most recently completed match
     let mut last_fulltime_message = None;
 
-    // By iterating through all found fixtures, the last one in the document
-    // marked as "FullTime" will be the most recent one played in this round.
     for fixture in all_fixtures {
         if fixture["matchState"].as_str() == Some("FullTime") {
             let home_team = fixture["homeTeam"]["nickName"]
@@ -148,7 +140,6 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
             let emoji_home = get_team_emoji(home_theme);
             let emoji_away = get_team_emoji(away_theme);
 
-            // This message goes to Discord, so it's in French
             last_fulltime_message = Some(format!(
                 "🏁 **RÉSULTAT FINAL :**\n{} **{}** {} - {} **{}** {}",
                 emoji_home, home_team, home_score, away_score, away_team, emoji_away
@@ -160,7 +151,6 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
 }
 
 fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Fetch the raw HTML using the current season dynamically
     let season = get_current_season();
     let ladder_url = format!(
         "https://www.nrl.com/ladder/?competition=111&season={}",
@@ -169,45 +159,36 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     let html_content = client.get(&ladder_url).send()?.text()?;
     let document = Html::parse_document(&html_content);
 
-    // 2. Select the div that holds the treasure (id="vue-ladder")
     let selector = Selector::parse("#vue-ladder").unwrap();
     let element = document
         .select(&selector)
         .next()
         .ok_or("Could not find #vue-ladder div in HTML")?;
 
-    // 3. Extract the JSON string from the "q-data" attribute
     let json_str = element
         .value()
         .attr("q-data")
         .ok_or("Could not find q-data attribute")?;
 
-    // 4. Parse the JSON
     let json_data: Value = serde_json::from_str(json_str)?;
 
-    // 5. Navigate to the ladder positions
     let positions = json_data["positions"]
         .as_array()
         .ok_or("Could not find positions array in JSON")?;
 
-    // 6. Build the new ladder state string for all 17 teams
-    // This message goes to Discord, so it's in French
     let mut current_ladder = String::from("🏆 **CLASSEMENT NRL** 🏆\n\n");
 
     for (index, team_data) in positions.iter().enumerate() {
         let team_name = team_data["teamNickname"].as_str().unwrap_or("Unknown");
 
-        // Fetch emoji using the theme key
         let theme_key = team_data["theme"]["key"].as_str().unwrap_or("unknown");
         let emoji_str = get_team_emoji(theme_key);
 
-        // Extracting all requested stats
         let points = team_data["stats"]["points"].as_u64().unwrap_or(0);
         let wins = team_data["stats"]["wins"].as_u64().unwrap_or(0);
         let drawn = team_data["stats"]["drawn"].as_u64().unwrap_or(0);
         let lost = team_data["stats"]["lost"].as_u64().unwrap_or(0);
 
-        // Logic to determine the next opponent (catching Byes). In French for Discord.
         let next_opponent = if team_data["next"]["isBye"].as_bool().unwrap_or(false) {
             "Repos".to_string()
         } else {
@@ -217,7 +198,6 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
                 .to_string()
         };
 
-        // Compact format to respect Discord's 2000 character limit (V = Victoires, N = Nuls, D = Défaites)
         current_ladder.push_str(&format!(
             "**{}.** {} **{}** • **{} pts** *(V:{} N:{} D:{})* 🔜 {}\n",
             index + 1,
@@ -231,37 +211,29 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    // 7. Read the last known state from our state file
     let last_ladder = load_state(STATE_FILE);
 
-    // 8. Compare and Alert if the ladder has changed
     if current_ladder != last_ladder {
-        // Ensure this is not the very first run (last_ladder empty) to avoid sending an old score
         if !last_ladder.is_empty() {
-            println!("🏴‍☠️ The ladder has shifted! Fetching the latest match result...");
+            info!("🏴‍☠️ The ladder has shifted! Fetching the latest match result...");
             match get_latest_match_result(client) {
                 Ok(Some(result_message)) => {
-                    // Send the final score
                     if let Err(e) = send_discord_alert(client, &result_message) {
-                        eprintln!("⚠️ Arrr! Failed to send match result: {}", e);
+                        warn!("⚠️ Arrr! Failed to send match result: {}", e);
                     }
 
-                    // Delaying for 2 seconds to ensure Discord processes the score before the ladder
-                    println!(
-                        "⏳ Pausing for 2 seconds to ensure correct message order on Discord..."
-                    );
+                    info!("⏳ Pausing for 2 seconds to ensure correct message order on Discord...");
                     thread::sleep(Duration::from_secs(2));
                 }
-                Ok(None) => println!("⚠️ No recent match result found on the page."),
-                Err(e) => eprintln!("⚠️ Error fetching match result: {}", e),
+                Ok(None) => info!("⚠️ No recent match result found on the page."),
+                Err(e) => warn!("⚠️ Error fetching match result: {}", e),
             }
         }
 
-        println!("🏴‍☠️ Firing ladder message to Discord...");
+        info!("🏴‍☠️ Firing ladder message to Discord...");
         send_discord_alert(client, &current_ladder)?;
     }
 
-    // Always update the state file (this also establishes the baseline on the very first run)
     if current_ladder != last_ladder {
         save_state(STATE_FILE, &current_ladder)?;
     }
