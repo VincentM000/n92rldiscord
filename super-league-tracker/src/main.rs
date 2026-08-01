@@ -161,6 +161,8 @@ fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::
                     if let Err(e) = send_discord_alert(client, &result_message) {
                         warn!("Failed to send match result: {}", e);
                     }
+
+                    thread::sleep(std::time::Duration::from_secs(2));
                 }
                 Ok(None) => info!("No recent match result found on page."),
                 Err(e) => warn!("Error fetching match result: {}", e),
