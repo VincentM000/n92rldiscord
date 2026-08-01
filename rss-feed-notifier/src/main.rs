@@ -1,8 +1,6 @@
-use pirate_utils::send_discord_alert;
+use pirate_utils::{load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use rss::Channel;
-use std::fs;
-use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -49,11 +47,7 @@ fn check_rss_feed(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     let latest_title = latest_item.title().unwrap_or("Nouvel article");
 
     // 4. Read the last known article link from our state file
-    let last_link = if Path::new(STATE_FILE).exists() {
-        fs::read_to_string(STATE_FILE).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let last_link = load_state(STATE_FILE);
 
     // 5. Compare and Alert!
     if latest_link != last_link && !last_link.is_empty() {
@@ -71,7 +65,7 @@ fn check_rss_feed(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
 
     // Always save the latest link so we establish our baseline (even on the first run)
     if latest_link != last_link {
-        fs::write(STATE_FILE, latest_link)?;
+        save_state(STATE_FILE, latest_link)?;
     }
 
     Ok(())

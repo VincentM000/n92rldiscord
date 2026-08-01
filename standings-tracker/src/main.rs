@@ -1,17 +1,17 @@
-use pirate_utils::send_discord_alert;
+use chrono::Datelike;
+use pirate_utils::{load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use serde_json::Value;
-use std::fs;
-use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
 
-const LADDER_URL: &str = "https://www.nrl.com/ladder/?competition=111&season=2026";
-// 🏴‍☠️ We target the Draw page instead of the Home page to bypass strict root caching
-const DRAW_URL: &str = "https://www.nrl.com/draw/?competition=111&season=2026";
 const STATE_FILE: &str = "ladder_state.txt";
+
+fn get_current_season() -> i32 {
+    chrono::Utc::now().year()
+}
 
 fn main() {
     println!(
@@ -88,8 +88,10 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
         .unwrap()
         .as_millis();
 
-    // 2. Create the stealth URL using the Draw page (Note the & instead of ? for the parameter)
-    let stealth_url = format!("{}&_t={}", DRAW_URL, timestamp);
+    // 2. Create the stealth URL using the Draw page with the current season dynamically
+    let season = get_current_season();
+    let draw_url = format!("https://www.nrl.com/draw/?competition=111&season={}", season);
+    let stealth_url = format!("{}&_t={}", draw_url, timestamp);
 
     // 3. Fetch the FRESH raw HTML from the stealth URL
     let html_content = client.get(&stealth_url).send()?.text()?;
@@ -146,8 +148,10 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
 }
 
 fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Fetch the raw HTML
-    let html_content = client.get(LADDER_URL).send()?.text()?;
+    // 1. Fetch the raw HTML using the current season dynamically
+    let season = get_current_season();
+    let ladder_url = format!("https://www.nrl.com/ladder/?competition=111&season={}", season);
+    let html_content = client.get(&ladder_url).send()?.text()?;
     let document = Html::parse_document(&html_content);
 
     // 2. Select the div that holds the treasure (id="vue-ladder")
@@ -213,11 +217,7 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 7. Read the last known state from our state file
-    let last_ladder = if Path::new(STATE_FILE).exists() {
-        fs::read_to_string(STATE_FILE).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let last_ladder = load_state(STATE_FILE);
 
     // 8. Compare and Alert if the ladder has changed
     if current_ladder != last_ladder {
@@ -248,7 +248,7 @@ fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
 
     // Always update the state file (this also establishes the baseline on the very first run)
     if current_ladder != last_ladder {
-        fs::write(STATE_FILE, &current_ladder)?;
+        save_state(STATE_FILE, &current_ladder)?;
     }
 
     Ok(())

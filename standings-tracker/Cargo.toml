@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 reqwest = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 scraper = "0.27.0" # We need this back to scrape the attribute
 pirate-utils = { path = "../pirate-utils" }

@@ -2,6 +2,22 @@ use dotenvy::dotenv;
 use reqwest::blocking::Client;
 use serde_json::json;
 use std::env;
+use std::fs;
+use std::path::Path;
+
+/// Reads state from a local file, returning an empty string if the file doesn't exist.
+pub fn load_state(filepath: &str) -> String {
+    if Path::new(filepath).exists() {
+        fs::read_to_string(filepath).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
+/// Saves state content to a local file.
+pub fn save_state(filepath: &str, content: &str) -> std::io::Result<()> {
+    fs::write(filepath, content)
+}
 
 /// Sends a message to the Discord channel using the Webhook URL stored in the .env file.
 pub fn send_discord_alert(
@@ -26,3 +42,4 @@ pub fn send_discord_alert(
 
     Ok(())
 }
+

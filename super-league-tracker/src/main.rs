@@ -1,8 +1,6 @@
-use pirate_utils::send_discord_alert;
+use pirate_utils::{load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
-use std::fs;
-use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -159,11 +157,7 @@ fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::
     }
 
     // 5. Read the last known state from our state file
-    let last_ladder = if Path::new(STATE_FILE).exists() {
-        fs::read_to_string(STATE_FILE).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let last_ladder = load_state(STATE_FILE);
 
     // 6. Compare and Alert if the ladder has changed
     if current_ladder != last_ladder && !current_ladder.is_empty() {
@@ -188,7 +182,7 @@ fn check_super_league_ladder(client: &Client) -> Result<(), Box<dyn std::error::
 
     // 7. Always update the state file (this also establishes the baseline on the very first run)
     if current_ladder != last_ladder {
-        fs::write(STATE_FILE, &current_ladder)?;
+        save_state(STATE_FILE, &current_ladder)?;
     }
 
     Ok(())

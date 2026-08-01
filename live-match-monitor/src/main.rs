@@ -1,9 +1,7 @@
 use chrono::{DateTime, Utc};
-use pirate_utils::send_discord_alert;
+use pirate_utils::{load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use serde_json::Value;
-use std::fs;
-use std::path::Path;
 use std::thread;
 use std::time::Duration; // 🏴‍☠️ Import the shared Captain Hook function!
 
@@ -107,11 +105,7 @@ fn check_rugbyrama_api(client: &Client) -> Result<Duration, Box<dyn std::error::
         next_sleep_secs = 600;
     }
 
-    let last_status = if Path::new(STATE_FILE).exists() {
-        fs::read_to_string(STATE_FILE).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let last_status = load_state(STATE_FILE);
 
     if current_status != last_status && current_status != "unknown" {
         let message: Option<String> = match current_status {
@@ -126,7 +120,7 @@ fn check_rugbyrama_api(client: &Client) -> Result<Duration, Box<dyn std::error::
             println!("Alert sent to Discord: {}", current_status);
         }
 
-        fs::write(STATE_FILE, current_status)?;
+        save_state(STATE_FILE, current_status)?;
     }
 
     Ok(Duration::from_secs(next_sleep_secs as u64))
