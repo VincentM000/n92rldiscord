@@ -42,4 +42,3 @@ pub fn send_discord_alert(
 
     Ok(())
 }
-

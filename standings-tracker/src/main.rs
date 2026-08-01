@@ -90,7 +90,10 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
 
     // 2. Create the stealth URL using the Draw page with the current season dynamically
     let season = get_current_season();
-    let draw_url = format!("https://www.nrl.com/draw/?competition=111&season={}", season);
+    let draw_url = format!(
+        "https://www.nrl.com/draw/?competition=111&season={}",
+        season
+    );
     let stealth_url = format!("{}&_t={}", draw_url, timestamp);
 
     // 3. Fetch the FRESH raw HTML from the stealth URL
@@ -150,7 +153,10 @@ fn get_latest_match_result(client: &Client) -> Result<Option<String>, Box<dyn st
 fn check_ladder(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Fetch the raw HTML using the current season dynamically
     let season = get_current_season();
-    let ladder_url = format!("https://www.nrl.com/ladder/?competition=111&season={}", season);
+    let ladder_url = format!(
+        "https://www.nrl.com/ladder/?competition=111&season={}",
+        season
+    );
     let html_content = client.get(&ladder_url).send()?.text()?;
     let document = Html::parse_document(&html_content);
 
