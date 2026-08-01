@@ -4,8 +4,9 @@ use scraper::{Html, Selector};
 
 const LADDER_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
+// ⚓ MISE À JOUR : On pointe sur la page des calendriers !
 const RESULTS_URL: &str =
-    "https://www.skysports.com/rugby-league/competitions/super-league/results";
+    "https://www.skysports.com/rugby-league/competitions/super-league/fixtures";
 const SL_STATE_FILE: &str = "sl_ladder_state.txt";
 const SL_MATCH_STATE_FILE: &str = "sl_match_state.txt";
 
@@ -53,6 +54,7 @@ impl LadderTracker for SuperLeagueTracker {
         let response = client.get(RESULTS_URL).send()?.text()?;
         let document = Html::parse_document(&response);
 
+        // ⚓ MISE À JOUR : On cible uniquement les matchs terminés !
         let match_selector =
             Selector::parse(".fixres__item .matches__link[data-status=\"FT\"]").unwrap();
         let team1_selector = Selector::parse(".matches__participant--side1").unwrap();
@@ -61,6 +63,7 @@ impl LadderTracker for SuperLeagueTracker {
 
         let mut all_ft_matches = Vec::new();
 
+        // ⚓ MISE À JOUR : On boucle pour ramasser tous les matchs terminés
         for match_node in document.select(&match_selector) {
             let team1 = match_node
                 .select(&team1_selector)
@@ -95,6 +98,7 @@ impl LadderTracker for SuperLeagueTracker {
         }
 
         if !all_ft_matches.is_empty() {
+            // ⚓ MISE À JOUR : On retourne la liste attachée avec "|||"
             return Ok(Some(all_ft_matches.join("|||")));
         }
 
