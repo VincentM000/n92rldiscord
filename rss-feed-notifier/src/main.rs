@@ -1,77 +1,68 @@
-use pirate_utils::send_discord_alert;
+use chrono::Timelike;
+use log::{info, warn};
+use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use rss::Channel;
-use std::fs;
-use std::path::Path;
 use std::thread;
-use std::time::Duration;
 
 const FEED_URL: &str = "https://treizemondial.fr/feed/";
 const STATE_FILE: &str = "last_article_url.txt";
 
+fn get_sleep_duration() -> std::time::Duration {
+    let hour = chrono::Utc::now().hour();
+    let base_secs = if (6..22).contains(&hour) { 300 } else { 1800 };
+    apply_jitter(base_secs)
+}
+
 fn main() {
+    env_logger::init();
+
     let client = Client::builder()
         .user_agent("NanterrePirates-RSS/1.0")
         .build()
         .expect("Failed to build HTTP client");
 
-    println!("🏴‍☠️ RSS Feed Notifier started. Checking Treize Mondial every 5 minutes...");
+    info!("RSS Feed Notifier started.");
 
     loop {
         if let Err(e) = check_rss_feed(&client) {
-            eprintln!("⚠️ Error checking RSS feed: {}", e);
+            warn!("Error checking RSS feed: {}", e);
         }
 
-        thread::sleep(Duration::from_secs(300));
+        let sleep_duration = get_sleep_duration();
+        thread::sleep(sleep_duration);
     }
 }
 
 fn check_rss_feed(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Fetch the raw XML from the feed
     let xml_content = client.get(FEED_URL).send()?.bytes()?;
-
-    // 2. Parse the XML into an RSS Channel object
     let channel = Channel::read_from(&xml_content[..])?;
 
-    // 3. Extract the very first (newest) article in the feed
     let latest_item = match channel.items().first() {
         Some(item) => item,
-        None => return Ok(()), // If the feed is completely empty, exit silently
+        None => return Ok(()),
     };
 
-    // We use the article's link as our unique identifier
     let latest_link = match latest_item.link() {
         Some(link) => link,
-        None => return Ok(()), // If there's no link, we can't really share it
+        None => return Ok(()),
     };
 
-    // Grab the title safely (fallback to a generic string if missing)
     let latest_title = latest_item.title().unwrap_or("Nouvel article");
+    let last_link = load_state(STATE_FILE);
 
-    // 4. Read the last known article link from our state file
-    let last_link = if Path::new(STATE_FILE).exists() {
-        fs::read_to_string(STATE_FILE).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    // 5. Compare and Alert!
     if latest_link != last_link && !last_link.is_empty() {
-        // We ensure last_link isn't empty so we don't spam the channel on the very first boot of the program
-
         let message = format!(
             "🗞️ **Nouvel article sur Treize Mondial !** 🏴‍☠️\n\n**{}**\n{}",
             latest_title, latest_link
         );
 
-        // Call the secure function from pirate-utils
         send_discord_alert(client, &message)?;
-        println!("Alert sent to Discord: {}", latest_title);
+        info!("Alert sent to Discord: {}", latest_title);
     }
 
-    // Always save the latest link so we establish our baseline (even on the first run)
     if latest_link != last_link {
-        fs::write(STATE_FILE, latest_link)?;
+        save_state(STATE_FILE, latest_link)?;
     }
 
     Ok(())

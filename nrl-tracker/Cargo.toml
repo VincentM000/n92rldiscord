@@ -1,10 +1,13 @@
 [package]
-name = "standings-tracker"
+name = "nrl-tracker"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 reqwest = { workspace = true }
 serde_json = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
 scraper = "0.27.0" # We need this back to scrape the attribute
 pirate-utils = { path = "../pirate-utils" }
