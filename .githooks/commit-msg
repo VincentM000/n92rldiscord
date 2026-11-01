@@ -1,0 +1,33 @@
+#!/usr/bin/env sh
+# Git hook: commit-msg
+# Vérifie que le message de commit respecte la convention Conventional Commits.
+
+set -e
+
+COMMIT_MSG_FILE="$1"
+FIRST_LINE=$(head -n 1 "$COMMIT_MSG_FILE")
+
+# Autoriser les commits de merge automatiques
+if echo "$FIRST_LINE" | grep -Eq "^Merge "; then
+    exit 0
+fi
+
+COMMIT_REGEX="^(feat|fix|refactor|docs|test|chore|perf|ci|build|style|revert)(\([a-z0-9_-]+\))?!?: .{3,}"
+
+if ! echo "$FIRST_LINE" | grep -Eq "$COMMIT_REGEX"; then
+    echo "❌ [commit-msg] Message de commit invalide :"
+    echo "   \"$FIRST_LINE\""
+    echo ""
+    echo "👉 Le message doit suivre la norme Conventional Commits :"
+    echo "   <type>(<scope optionnel>): <description courte>"
+    echo ""
+    echo "   Types autorisés : feat, fix, refactor, docs, test, chore, perf, ci, build, style, revert"
+    echo "   Exemples valides :"
+    echo "     feat(super-xiii): add pre-match youtube live detector"
+    echo "     refactor(pirate-utils): centralize ladder domain models"
+    echo "     fix(nrl-tracker): handle empty match fixtures list"
+    exit 1
+fi
+
+echo "✅ [commit-msg] Format du message de commit valide."
+

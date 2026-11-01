@@ -8,7 +8,8 @@ use ffr13::{
     calculate_adaptive_sleep, format_match_result_message, format_prematch_alert_message,
     get_matches_in_prematch_window, parse_all_matches, parse_ranking_table, FFR13_SUPER_XIII_URL,
 };
-use pirate_utils::send_discord_alert;
+use log::{info, warn};
+use pirate_utils::{apply_jitter, build_http_client, send_discord_alert};
 use reqwest::blocking::Client;
 use state::AppState;
 use std::env;
@@ -17,19 +18,12 @@ use std::time::Duration;
 use youtube::{fetch_channel_videos, scan_super_xiii_youtube_channels};
 
 fn main() {
-    println!("🏴‍☠️ ================================================================");
-    println!("🏴‍☠️ Nanterre Pirates - Super XIII Live Tracker & YouTube Monitor 🏴‍☠️");
-    println!("🏴‍☠️ ================================================================\n");
+    env_logger::init();
+    info!("🏴‍☠️ Nanterre Pirates - Super XIII Live Tracker & YouTube Monitor started.");
 
-    let client = Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) NanterrePirates-SuperXIII/1.0")
-        .timeout(Duration::from_secs(20))
-        .build()
-        .expect("Failed to build HTTP client");
-
+    let client = build_http_client();
     let (mut state, is_first_run) = AppState::load();
 
-    // Parse CLI arguments
     let args: Vec<String> = env::args().collect();
     let force_yt = args.iter().any(|a| a == "--scan-yt");
     let run_once = args.iter().any(|a| a == "--check-once" || a == "--now");
@@ -37,49 +31,58 @@ fn main() {
 
     if show_status {
         println!("📊 État actuel du tracker Super XIII :");
-        println!("  - Matchs terminés enregistrés : {}", state.completed_matches.len());
-        println!("  - Alertes avant-match envoyées : {}", state.alerted_pre_matches.len());
-        println!("  - Vidéos YouTube enregistrées : {}", state.sent_youtube_videos.len());
+        println!(
+            "  - Matchs terminés enregistrés : {}",
+            state.completed_matches.len()
+        );
+        println!(
+            "  - Alertes avant-match envoyées : {}",
+            state.alerted_pre_matches.len()
+        );
+        println!(
+            "  - Vidéos YouTube enregistrées : {}",
+            state.sent_youtube_videos.len()
+        );
         println!("  - Dernier scan YouTube : {:?}", state.last_yt_scan_date);
         return;
     }
 
     if is_first_run {
-        println!("⚓ Premier lancement détecté ! Établissement de la base de référence pour éviter le spam...");
+        info!("⚓ Premier lancement détecté ! Établissement de la base de référence...");
         initialize_baseline(&client, &mut state);
     }
 
     if force_yt {
-        println!("⚡ Lancement forcé du scan YouTube...");
+        info!("⚡ Lancement forcé du scan YouTube...");
         if let Err(e) = scan_super_xiii_youtube_channels(&client, &mut state) {
-            eprintln!("⚠️ Erreur lors du scan YouTube : {}", e);
+            warn!("Erreur lors du scan YouTube : {}", e);
         }
         if run_once {
             return;
         }
     }
 
-    // Main Loop
     loop {
-        // 1. Check YouTube (Monday to Friday, once per day)
         check_daily_youtube(&client, &mut state);
 
-        // 2. Check FFR13 for match results and ladder updates
         let next_sleep = match check_ffr13_competition(&client, &mut state) {
             Ok(duration) => duration,
             Err(e) => {
-                eprintln!("⚠️ Erreur lors de la vérification FFR13 : {}. Reprise dans 10 min.", e);
-                Duration::from_secs(600)
+                warn!(
+                    "Erreur lors de la vérification FFR13 : {}. Reprise dans 10 min.",
+                    e
+                );
+                apply_jitter(600)
             }
         };
 
         if run_once {
-            println!("🏁 Mode exécution unique terminé.");
+            info!("🏁 Mode exécution unique terminé.");
             break;
         }
 
-        println!(
-            "💤 Radar en veille... prochaine vigie dans {} secondes ({} minutes)...\n",
+        info!(
+            "💤 Radar en veille... prochaine vigie dans {} secondes ({} minutes)...",
             next_sleep.as_secs(),
             next_sleep.as_secs() / 60
         );
@@ -87,10 +90,12 @@ fn main() {
     }
 }
 
-/// Baseline initialization on first start to avoid alerting historic matches/videos
 fn initialize_baseline(client: &Client, state: &mut AppState) {
-    // 1. Baseline FFR13
-    match client.get(FFR13_SUPER_XIII_URL).send().and_then(|r| r.text()) {
+    match client
+        .get(FFR13_SUPER_XIII_URL)
+        .send()
+        .and_then(|r| r.text())
+    {
         Ok(html) => {
             let (_, ladder_msg) = parse_ranking_table(&html);
             state.last_ladder = ladder_msg;
@@ -104,15 +109,17 @@ fn initialize_baseline(client: &Client, state: &mut AppState) {
                     count += 1;
                 }
             }
-            println!("  ✅ {} matchs passés enregistrés en référence.", count);
+            info!("✅ {} matchs passés enregistrés en référence.", count);
         }
         Err(e) => {
-            eprintln!("  ⚠️ Impossible de récupérer la page FFR13 pour la baseline : {}", e);
+            warn!(
+                "Impossible de récupérer la page FFR13 pour la baseline : {}",
+                e
+            );
         }
     }
 
-    // 2. Baseline YouTube (mark existing videos as seen)
-    println!("  📺 Enregistrement des vidéos YouTube actuelles pour éviter le spam initial...");
+    info!("📺 Enregistrement des vidéos YouTube actuelles pour éviter le spam initial...");
     for club in clubs::CLUBS {
         if let Ok(videos) = fetch_channel_videos(client, club.yt_channel_id) {
             for v in videos {
@@ -121,33 +128,31 @@ fn initialize_baseline(client: &Client, state: &mut AppState) {
         }
         thread::sleep(Duration::from_millis(200));
     }
-    println!("  ✅ {} vidéos YouTube enregistrées.", state.sent_youtube_videos.len());
+    info!(
+        "✅ {} vidéos YouTube enregistrées.",
+        state.sent_youtube_videos.len()
+    );
 
     let today_str = Local::now().format("%Y-%m-%d").to_string();
     state.last_yt_scan_date = Some(today_str);
 
     if let Err(e) = state.save() {
-        eprintln!("⚠️ Erreur lors de la sauvegarde de la baseline : {}", e);
+        warn!("Erreur lors de la sauvegarde de la baseline : {}", e);
     }
-    println!("⚓ Base de référence établie avec succès !\n");
+    info!("⚓ Base de référence établie avec succès !");
 }
 
-/// Checks YouTube once per day, strictly from Monday to Friday
 fn check_daily_youtube(client: &Client, state: &mut AppState) {
     let now = Local::now();
     let weekday = now.weekday();
     let is_weekday = weekday != Weekday::Sat && weekday != Weekday::Sun;
     let today_str = now.format("%Y-%m-%d").to_string();
 
-    if !is_weekday {
+    if !is_weekday || state.last_yt_scan_date.as_deref() == Some(&today_str) {
         return;
     }
 
-    if state.last_yt_scan_date.as_deref() == Some(&today_str) {
-        return;
-    }
-
-    println!(
+    info!(
         "📅 Scan YouTube quotidien ({}) : recherche des matchs diffusés par les clubs...",
         today_str
     );
@@ -158,29 +163,23 @@ fn check_daily_youtube(client: &Client, state: &mut AppState) {
             let _ = state.save();
         }
         Err(e) => {
-            eprintln!("⚠️ Erreur lors du scan quotidien YouTube : {}", e);
+            warn!("Erreur lors du scan quotidien YouTube : {}", e);
         }
     }
 }
 
-/// Scrapes FFR13, sends match alerts, updates the standings, and returns the adaptive sleep time
 fn check_ffr13_competition(
     client: &Client,
     state: &mut AppState,
 ) -> Result<Duration, Box<dyn std::error::Error>> {
-    println!("📡 Vigie FFR13 : consultation de la page Super XIII...");
+    info!("📡 Vigie FFR13 : consultation de la page Super XIII...");
     let response = client.get(FFR13_SUPER_XIII_URL).send()?.text()?;
 
-    // 1. Parse official ranking table
     let (_rows, current_ladder) = parse_ranking_table(&response);
-
-    // 2. Parse all rounds and matches
     let matches = parse_all_matches(&response);
 
-    // 3. Check for upcoming pre-match live streams (window around kickoff)
     check_upcoming_prematch_streams(client, state, &matches);
 
-    // 4. Find newly completed matches
     let mut newly_finished = Vec::new();
     for m in &matches {
         if m.is_finished() && !state.completed_matches.contains(&m.id) {
@@ -188,23 +187,23 @@ fn check_ffr13_competition(
         }
     }
 
-    // 5. Alert newly finished matches
     for m in newly_finished {
         let result_msg = format_match_result_message(&m);
-        println!("🏁 Nouveau résultat détecté ! Envoi à Discord :\n{}", result_msg);
+        info!(
+            "🏁 Nouveau résultat détecté ! Envoi à Discord :\n{}",
+            result_msg
+        );
 
         if let Err(e) = send_discord_alert(client, &result_msg) {
-            eprintln!("⚠️ Échec de l'envoi du score à Discord : {}", e);
+            warn!("Échec de l'envoi du score à Discord : {}", e);
         }
 
-        // Wait 2 seconds before sending the ladder to guarantee Discord message order
-        println!("⏳ Pause de 2 secondes avant l'envoi du classement mis à jour...");
         thread::sleep(Duration::from_secs(2));
 
         if !current_ladder.is_empty() {
-            println!("🏆 Envoi du classement mis à jour à Discord...");
+            info!("🏆 Envoi du classement mis à jour à Discord...");
             if let Err(e) = send_discord_alert(client, &current_ladder) {
-                eprintln!("⚠️ Échec de l'envoi du classement : {}", e);
+                warn!("Échec de l'envoi du classement : {}", e);
             }
             state.last_ladder = current_ladder.clone();
         }
@@ -213,24 +212,21 @@ fn check_ffr13_competition(
         let _ = state.save();
     }
 
-    // 5. If ladder changed independently (e.g. bonus point recalculation or sanctions)
     if !current_ladder.is_empty() && current_ladder != state.last_ladder {
         if !state.last_ladder.is_empty() {
-            println!("📊 Évolution du classement détectée hors fin de match ! Envoi à Discord...");
+            info!("📊 Évolution du classement détectée hors fin de match ! Envoi à Discord...");
             if let Err(e) = send_discord_alert(client, &current_ladder) {
-                eprintln!("⚠️ Échec de l'envoi du classement : {}", e);
+                warn!("Échec de l'envoi du classement : {}", e);
             }
         }
         state.last_ladder = current_ladder;
         let _ = state.save();
     }
 
-    // 6. Calculate adaptive sleeping time using the matches calendar
     let sleep_duration = calculate_adaptive_sleep(&matches);
     Ok(sleep_duration)
 }
 
-/// Checks specifically if matches starting soon have a live stream waiting room or broadcast ready on YouTube
 fn check_upcoming_prematch_streams(
     client: &Client,
     state: &mut AppState,
@@ -241,7 +237,7 @@ fn check_upcoming_prematch_streams(
         return;
     }
 
-    println!(
+    info!(
         "⚡ [Radar Avant-match] Fenêtre active : {} match(s) approchant du coup d'envoi.",
         prematch_matches.len()
     );
@@ -252,24 +248,24 @@ fn check_upcoming_prematch_streams(
         }
 
         if let Some(host_club) = clubs::find_club_by_name(&m.home_team) {
-            println!(
-                "  🔍 Vérification de la chaîne de {} ({}) pour un direct d'avant-match...",
+            info!(
+                "🔍 Vérification de la chaîne de {} ({}) pour un direct d'avant-match...",
                 host_club.name, host_club.yt_handle
             );
 
             match youtube::check_club_live_stream(client, host_club) {
                 Ok(Some(live)) => {
-                    println!(
-                        "  🚨 DIRECT DÉTECTÉ pour {} : \"{}\" ({})",
+                    info!(
+                        "🚨 DIRECT DÉTECTÉ pour {} : \"{}\" ({})",
                         host_club.name, live.title, live.url
                     );
 
                     let alert_msg = format_prematch_alert_message(&m, &live.title, &live.url);
 
                     if let Err(e) = send_discord_alert(client, &alert_msg) {
-                        eprintln!("  ⚠️ Erreur lors de l'envoi de l'alerte avant-match : {}", e);
+                        warn!("Erreur lors de l'envoi de l'alerte avant-match : {}", e);
                     } else {
-                        println!("  ✅ Alerte coup d'envoi imminent envoyée sur Discord !");
+                        info!("✅ Alerte coup d'envoi imminent envoyée sur Discord !");
                         state.alerted_pre_matches.insert(m.id);
                         state.sent_youtube_videos.insert(live.video_id);
                         let _ = state.save();
@@ -277,16 +273,13 @@ fn check_upcoming_prematch_streams(
                     }
                 }
                 Ok(None) => {
-                    println!(
-                        "  ⏳ Aucun flux en direct actif pour le moment sur {}.",
+                    info!(
+                        "⏳ Aucun flux en direct actif pour le moment sur {}.",
                         host_club.yt_handle
                     );
                 }
                 Err(e) => {
-                    eprintln!(
-                        "  ⚠️ Erreur vérification live pour {} : {}",
-                        host_club.name, e
-                    );
+                    warn!("Erreur vérification live pour {} : {}", host_club.name, e);
                 }
             }
         }

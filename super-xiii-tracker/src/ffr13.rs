@@ -1,5 +1,6 @@
 use crate::clubs::get_club_display;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
 use scraper::{Html, Selector};
 use serde_json::Value;
 use std::time::Duration;
@@ -29,41 +30,26 @@ impl FfrMatch {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct RankingRow {
-    pub rank: u32,
-    pub team_name: String,
-    pub points: String,
-    pub played: String,
-    pub win: String,
-    pub draw: String,
-    pub lost: String,
-    pub diff: String,
-}
-
-/// Extract the official ranking table from the FFR13 page
-pub fn parse_ranking_table(html: &str) -> (Vec<RankingRow>, String) {
+/// Extract the official ranking table from the FFR13 page using shared `LadderRow` and `format_ladder`.
+pub fn parse_ranking_table(html: &str) -> (Vec<LadderRow>, String) {
     let document = Html::parse_document(html);
     let row_selector = Selector::parse("table.ranking tr.rank-line").unwrap();
     let rank_selector = Selector::parse("td.rank").unwrap();
     let team_selector = Selector::parse("td.team").unwrap();
     let pts_selector = Selector::parse("td.points").unwrap();
-    let played_selector = Selector::parse("td.played").unwrap();
     let win_selector = Selector::parse("td.win").unwrap();
     let draw_selector = Selector::parse("td.draw").unwrap();
     let lost_selector = Selector::parse("td.lost").unwrap();
     let diff_selector = Selector::parse("td.diff").unwrap();
 
     let mut rows = Vec::new();
-    let mut ladder_message = String::from("🏆 **CLASSEMENT SUPER XIII** 🏆\n\n");
 
     for (idx, row) in document.select(&row_selector).enumerate() {
         let rank = row
             .select(&rank_selector)
             .next()
-            .and_then(|e| e.text().collect::<String>().trim().parse::<u32>().ok())
-            .unwrap_or((idx + 1) as u32);
+            .and_then(|e| e.text().collect::<String>().trim().parse::<usize>().ok())
+            .unwrap_or(idx + 1);
 
         let raw_team = row
             .select(&team_selector)
@@ -71,35 +57,29 @@ pub fn parse_ranking_table(html: &str) -> (Vec<RankingRow>, String) {
             .map(|e| e.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
 
-        let pts = row
+        let points = row
             .select(&pts_selector)
             .next()
-            .map(|e| e.text().collect::<String>().trim().to_string())
-            .unwrap_or_else(|| "0".to_string());
+            .and_then(|e| e.text().collect::<String>().trim().parse::<i32>().ok())
+            .unwrap_or(0);
 
-        let played = row
-            .select(&played_selector)
-            .next()
-            .map(|e| e.text().collect::<String>().trim().to_string())
-            .unwrap_or_else(|| "0".to_string());
-
-        let win = row
+        let wins = row
             .select(&win_selector)
             .next()
-            .map(|e| e.text().collect::<String>().trim().to_string())
-            .unwrap_or_else(|| "0".to_string());
+            .and_then(|e| e.text().collect::<String>().trim().parse::<u32>().ok())
+            .unwrap_or(0);
 
-        let draw = row
+        let draws = row
             .select(&draw_selector)
             .next()
-            .map(|e| e.text().collect::<String>().trim().to_string())
-            .unwrap_or_else(|| "0".to_string());
+            .and_then(|e| e.text().collect::<String>().trim().parse::<u32>().ok())
+            .unwrap_or(0);
 
-        let lost = row
+        let losses = row
             .select(&lost_selector)
             .next()
-            .map(|e| e.text().collect::<String>().trim().to_string())
-            .unwrap_or_else(|| "0".to_string());
+            .and_then(|e| e.text().collect::<String>().trim().parse::<u32>().ok())
+            .unwrap_or(0);
 
         let diff = row
             .select(&diff_selector)
@@ -112,31 +92,26 @@ pub fn parse_ranking_table(html: &str) -> (Vec<RankingRow>, String) {
         let diff_formatted = if !diff.starts_with('-') && diff != "0" {
             format!("+{}", diff)
         } else {
-            diff.clone()
+            diff
         };
 
-        // Compact format for Discord matching NRL & Super League style
-        ladder_message.push_str(&format!(
-            "**{}.** {} **{}** • **{} pts** *(V:{} N:{} D:{})* • Diff: {}\n",
-            rank, emoji, canonical_name, pts, win, draw, lost, diff_formatted
-        ));
-
-        rows.push(RankingRow {
+        rows.push(LadderRow {
             rank,
             team_name: canonical_name,
-            points: pts,
-            played,
-            win,
-            draw,
-            lost,
-            diff,
+            emoji: emoji.to_string(),
+            points,
+            wins,
+            draws,
+            losses,
+            suffix: Some(format!("• Diff: {}", diff_formatted)),
         });
     }
 
+    let ladder_message = format_ladder("CLASSEMENT SUPER XIII", &rows);
     (rows, ladder_message)
 }
 
-/// Parse matches from the embedded jsonContent JavaScript variable
+/// Parse matches from the embedded `jsonContent` JavaScript variable.
 pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
     let mut matches = Vec::new();
 
@@ -147,7 +122,7 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
     };
 
     let remaining = &html[start_idx..];
-    let end_idx = match remaining.find(";\n").or_else(|| remaining.find(";")) {
+    let end_idx = match remaining.find(";\n").or_else(|| remaining.find(';')) {
         Some(idx) => idx,
         None => return matches,
     };
@@ -167,16 +142,10 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
         if let Some(games) = games_val.as_array() {
             for g in games {
                 let id = g["id"].as_i64().unwrap_or(0);
-                let num_rencontre = g["num_rencontre"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
+                let num_rencontre = g["num_rencontre"].as_str().unwrap_or_default().to_string();
                 let round = g["num_journee"].as_str().unwrap_or("?").to_string();
                 let date_str = g["dt_rencontre"].as_str().unwrap_or_default().to_string();
-                let time_str = g["time_rencontre"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
+                let time_str = g["time_rencontre"].as_str().unwrap_or_default().to_string();
 
                 let home = g["equipe_domicile"]["lb_equipe"]
                     .as_str()
@@ -195,7 +164,6 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
                 let status_id = g["statut_match_id"].as_i64();
                 let stadium = g["lb_stade"].as_str().unwrap_or_default().to_string();
 
-                // Parse datetime in French local time
                 let kickoff = if !date_str.is_empty() && !time_str.is_empty() {
                     let dt_str = format!("{} {}:00", date_str, time_str);
                     NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M:%S")
@@ -226,7 +194,7 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
     matches
 }
 
-/// Returns matches whose kickoff is within the pre-game window [-10 mins, +15 mins]
+/// Returns matches whose kickoff is within the pre-game window [-10 mins, +15 mins].
 pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
     let now = Local::now();
     let mut prematch = Vec::new();
@@ -237,8 +205,7 @@ pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
         }
         if let Some(kickoff) = m.kickoff {
             let diff_secs = kickoff.signed_duration_since(now).num_seconds();
-            // Window: from 15 minutes before kickoff up to 10 minutes after kickoff
-            if diff_secs >= -600 && diff_secs <= 900 {
+            if (-600..=900).contains(&diff_secs) {
                 prematch.push(m.clone());
             }
         }
@@ -247,10 +214,10 @@ pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
     prematch
 }
 
-/// Calculate adaptive polling sleep duration based on the schedule of rounds and matches
+/// Calculates adaptive polling sleep duration based on the schedule of rounds and matches.
 pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
     let now = Local::now();
-    let mut min_sleep_secs: i64 = 1800; // default 30 mins
+    let mut min_sleep_secs: i64 = 1800;
 
     let mut is_match_live_now = false;
     let mut is_prematch_window = false;
@@ -261,19 +228,14 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
         if let Some(kickoff) = m.kickoff {
             let diff_secs = kickoff.signed_duration_since(now).num_seconds();
 
-            // Pre-match window: [H-15min, H+10min]
-            if !m.is_finished() && diff_secs >= -600 && diff_secs <= 900 {
+            if !m.is_finished() && (-600..=900).contains(&diff_secs) {
                 is_prematch_window = true;
             }
 
-            // Match is in progress (between kickoff and kickoff + 2h15)
-            if diff_secs <= 0 && diff_secs >= -8100 {
-                if !m.is_finished() {
-                    is_match_live_now = true;
-                }
+            if (-8100..=0).contains(&diff_secs) && !m.is_finished() {
+                is_match_live_now = true;
             }
 
-            // Match starting soon in future (within next 24h)
             if diff_secs > 0 && diff_secs < 86400 {
                 closest_future_kickoff_secs = match closest_future_kickoff_secs {
                     Some(cur) => Some(cur.min(diff_secs)),
@@ -281,7 +243,6 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
                 };
             }
 
-            // Match finished today within last 8 hours but scores still missing
             if diff_secs < -8100 && diff_secs > -28800 && !m.is_finished() {
                 match_finished_recently_missing_score = true;
             }
@@ -289,62 +250,55 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
     }
 
     if is_prematch_window {
-        // High frequency during pre-game window (check every 60s for YouTube stream startup)
         min_sleep_secs = 60;
     } else if is_match_live_now {
-        // Match underway! Check every 3 minutes (180 seconds) to catch full-time instantly
         min_sleep_secs = 180;
     } else if let Some(secs_to_start) = closest_future_kickoff_secs {
         if secs_to_start <= 900 {
-            // Less than 15 minutes before kickoff
             min_sleep_secs = 60;
         } else if secs_to_start <= 3600 {
-            // Less than 1 hour before kickoff: check every 5 minutes
             min_sleep_secs = 300;
         } else if secs_to_start <= 7200 {
-            // Less than 2 hours before kickoff: check every 15 minutes
             min_sleep_secs = 900;
         }
     } else if match_finished_recently_missing_score {
-        // Waiting for official score entry from referee / league: check every 5 minutes
         min_sleep_secs = 300;
     }
 
     Duration::from_secs(min_sleep_secs as u64)
 }
 
-/// Format Discord pre-match imminent alert
-pub fn format_prematch_alert_message(
-    m: &FfrMatch,
-    video_title: &str,
-    video_url: &str,
-) -> String {
+/// Formats the Discord match result message using shared `pirate_utils::format_match_result`.
+pub fn format_match_result_message(m: &FfrMatch) -> String {
+    let (home_name, home_emoji) = get_club_display(&m.home_team);
+    let (away_name, away_emoji) = get_club_display(&m.away_team);
+
+    let result = MatchResult {
+        header_suffix: Some(format!("SUPER XIII (Journée {})", m.round)),
+        home_team: home_name,
+        home_emoji: home_emoji.to_string(),
+        home_score: m.score_home.unwrap_or(0),
+        away_team: away_name,
+        away_emoji: away_emoji.to_string(),
+        away_score: m.score_away.unwrap_or(0),
+        venue: if m.stadium.is_empty() {
+            None
+        } else {
+            Some(m.stadium.clone())
+        },
+    };
+
+    format_match_result(&result)
+}
+
+/// Formats Discord pre-match imminent alert.
+pub fn format_prematch_alert_message(m: &FfrMatch, video_title: &str, video_url: &str) -> String {
     let (home_name, home_emoji) = get_club_display(&m.home_team);
     let (away_name, away_emoji) = get_club_display(&m.away_team);
 
     let mut message = format!(
         "⏰ **COUP D'ENVOI IMMINENT - SUPER XIII !** 🏉 🏴‍☠️\n\nLe match **{}** {} vs **{}** {} (Journée {}) débute dans quelques minutes !\n📺 Retransmission en direct sur YouTube :\n🎥 **{}**\n\n🔗 {}",
         home_name, home_emoji, away_name, away_emoji, m.round, video_title, video_url
-    );
-
-    if !m.stadium.is_empty() {
-        message.push_str(&format!("\n📍 *{}*", m.stadium));
-    }
-
-    message
-}
-
-/// Format the Discord match result message matching the style of NRL & Super League
-pub fn format_match_result_message(m: &FfrMatch) -> String {
-    let (home_name, home_emoji) = get_club_display(&m.home_team);
-    let (away_name, away_emoji) = get_club_display(&m.away_team);
-
-    let score_h = m.score_home.unwrap_or(0);
-    let score_a = m.score_away.unwrap_or(0);
-
-    let mut message = format!(
-        "🏁 **RÉSULTAT FINAL - SUPER XIII (Journée {}) :**\n{} **{}** {} - {} **{}** {}",
-        m.round, home_emoji, home_name, score_h, score_a, away_name, away_emoji
     );
 
     if !m.stadium.is_empty() {
@@ -419,7 +373,7 @@ mod tests {
             round: "2".to_string(),
             date_str: "2026-11-01".to_string(),
             time_str: "16:30".to_string(),
-            kickoff: Some(now + chrono::Duration::minutes(5)), // in 5 mins!
+            kickoff: Some(now + chrono::Duration::minutes(5)),
             home_team: "Carcassonne XIII".to_string(),
             away_team: "FC Lézignan XIII".to_string(),
             score_home: None,
@@ -434,7 +388,7 @@ mod tests {
             round: "2".to_string(),
             date_str: "2026-11-01".to_string(),
             time_str: "20:30".to_string(),
-            kickoff: Some(now + chrono::Duration::hours(5)), // in 5 hours
+            kickoff: Some(now + chrono::Duration::hours(5)),
             home_team: "Albi RL XIII".to_string(),
             away_team: "Pia XIII Baroudeur".to_string(),
             score_home: None,
@@ -447,5 +401,30 @@ mod tests {
         let prematch = get_matches_in_prematch_window(&list);
         assert_eq!(prematch.len(), 1);
         assert_eq!(prematch[0].id, 9999);
+    }
+
+    #[test]
+    fn test_parse_ranking_table_mock() {
+        let mock_html = r#"
+            <table class="ranking">
+                <tr class="rank-line">
+                    <td class="rank">1</td>
+                    <td class="team">SO Avignon XIII</td>
+                    <td class="points">6</td>
+                    <td class="played">2</td>
+                    <td class="win">2</td>
+                    <td class="draw">0</td>
+                    <td class="lost">0</td>
+                    <td class="diff">13</td>
+                </tr>
+            </table>
+        "#;
+
+        let (rows, ladder_msg) = parse_ranking_table(mock_html);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].team_name, "SO Avignon XIII");
+        assert_eq!(rows[0].points, 6);
+        assert!(ladder_msg
+            .contains("**1.** 🦬 **SO Avignon XIII** • **6 pts** *(V:2 N:0 D:0)* • Diff: +13"));
     }
 }

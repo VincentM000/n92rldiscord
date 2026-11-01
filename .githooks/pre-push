@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# Git hook: pre-push
+# Vérifie le nom de la branche et la suite de tests avant un git push.
+
+set -e
+
+BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+if [ -n "$BRANCH_NAME" ]; then
+    BRANCH_REGEX="^(main|(feat|fix|refactor|docs|test|chore|perf|ci|hotfix|wip)/[a-z0-9]+(-[a-z0-9]+)*)$"
+    if ! echo "$BRANCH_NAME" | grep -Eq "$BRANCH_REGEX"; then
+        echo "❌ [pre-push] Push refusé : le nom de la branche '$BRANCH_NAME' ne respecte pas les conventions."
+        echo "👉 Renommez votre branche avec : git branch -m <type>/<nom-kebab-case>"
+        exit 1
+    fi
+fi
+
+echo "🧪 [pre-push] Vérification finale des tests unitaires..."
+cargo test --workspace --quiet
+echo "✅ [pre-push] Prêt à pousser !"
+

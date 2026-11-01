@@ -1,6 +1,7 @@
 use crate::clubs::{Club, CLUBS};
 use crate::state::AppState;
-use pirate_utils::send_discord_alert;
+use log::{info, warn};
+use pirate_utils::{extract_between, send_discord_alert};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use std::thread;
@@ -15,21 +16,22 @@ pub struct LiveStreamDetails {
     pub is_live_now: bool,
 }
 
-fn extract_string_between<'a>(src: &'a str, start_delim: &str, end_delim: &str) -> Option<&'a str> {
-    let start = src.find(start_delim)? + start_delim.len();
-    let rest = &src[start..];
-    let end = rest.find(end_delim)?;
-    Some(&rest[..end])
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct YouTubeVideo {
+    pub video_id: String,
+    pub title: String,
+    pub link: String,
+    pub published: String,
 }
 
-/// Probes specifically the club's YouTube channel for an active live stream or scheduled waiting room
+/// Probes specifically the club's YouTube channel for an active live stream or scheduled waiting room.
 pub fn check_club_live_stream(
     client: &Client,
     club: &Club,
 ) -> Result<Option<LiveStreamDetails>, Box<dyn std::error::Error>> {
     let live_url = format!("https://www.youtube.com/{}/live", club.yt_handle);
 
-    // 1. Probe the /live direct endpoint
     let response_text = match client
         .get(&live_url)
         .header("Accept-Language", "fr-FR,fr;q=0.9")
@@ -37,7 +39,7 @@ pub fn check_club_live_stream(
     {
         Ok(res) => res.text().unwrap_or_default(),
         Err(e) => {
-            eprintln!("    ⚠️ Error accessing {}/live: {}", club.yt_handle, e);
+            warn!("Error accessing {}/live: {}", club.yt_handle, e);
             String::new()
         }
     };
@@ -46,17 +48,29 @@ pub fn check_club_live_stream(
         && (response_text.contains("\"watchEndpoint\"")
             || response_text.contains("liveBroadcastDetails"))
     {
-        let video_id_opt = extract_string_between(&response_text, "\"watchEndpoint\":{\"videoId\":\"", "\"")
-            .or_else(|| extract_string_between(&response_text, "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=", "\""))
-            .or_else(|| extract_string_between(&response_text, "externalVideoId\":\"", "\""));
+        let video_id_opt =
+            extract_between(&response_text, "\"watchEndpoint\":{\"videoId\":\"", "\"")
+                .or_else(|| {
+                    extract_between(
+                        &response_text,
+                        "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=",
+                        "\"",
+                    )
+                })
+                .or_else(|| extract_between(&response_text, "externalVideoId\":\"", "\""));
 
         if let Some(video_id) = video_id_opt {
-            let title = extract_string_between(&response_text, "<meta property=\"og:title\" content=\"", "\"")
-                .or_else(|| extract_string_between(&response_text, "<title>", "</title>"))
-                .map(|s| s.replace(" - YouTube", "").trim().to_string())
-                .unwrap_or_else(|| format!("Match en direct de {}", club.name));
+            let title = extract_between(
+                &response_text,
+                "<meta property=\"og:title\" content=\"",
+                "\"",
+            )
+            .or_else(|| extract_between(&response_text, "<title>", "</title>"))
+            .map(|s| s.replace(" - YouTube", "").trim().to_string())
+            .unwrap_or_else(|| format!("Match en direct de {}", club.name));
 
-            let is_live_now = response_text.contains("\"isLiveNow\":true") || response_text.contains("\"isLive\":true");
+            let is_live_now = response_text.contains("\"isLiveNow\":true")
+                || response_text.contains("\"isLive\":true");
 
             return Ok(Some(LiveStreamDetails {
                 video_id: video_id.to_string(),
@@ -67,7 +81,6 @@ pub fn check_club_live_stream(
         }
     }
 
-    // 2. Complementary check: inspect channel RSS feed for fresh videos published recently
     if let Ok(videos) = fetch_channel_videos(client, club.yt_channel_id) {
         if let Some(first) = videos.first() {
             if is_match_video(club, first) {
@@ -84,16 +97,7 @@ pub fn check_club_live_stream(
     Ok(None)
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct YouTubeVideo {
-    pub video_id: String,
-    pub title: String,
-    pub link: String,
-    pub published: String,
-}
-
-/// Fetch recent videos for a specific YouTube channel using its public Atom RSS feed
+/// Fetches recent videos for a specific YouTube channel using its public Atom RSS feed.
 pub fn fetch_channel_videos(
     client: &Client,
     channel_id: &str,
@@ -131,11 +135,8 @@ pub fn fetch_channel_videos(
             video_id = link[pos + 2..].to_string();
         } else {
             let html_str = entry.html();
-            if let Some(pos) = html_str.find("<yt:videoid>") {
-                let rest = &html_str[pos + 12..];
-                if let Some(end) = rest.find("</yt:videoid>") {
-                    video_id = rest[..end].to_string();
-                }
+            if let Some(extracted) = extract_between(&html_str, "<yt:videoid>", "</yt:videoid>") {
+                video_id = extracted.to_string();
             }
         }
 
@@ -158,17 +159,15 @@ pub fn fetch_channel_videos(
     Ok(videos)
 }
 
-/// Determines if a video is a home match stream/replay or broadcast
+/// Determines if a video is a home match stream/replay or broadcast.
 pub fn is_match_video(host_club: &Club, video: &YouTubeVideo) -> bool {
     let title_lower = video.title.to_lowercase();
 
-    // 1. Direct competition names
     let has_competition = title_lower.contains("super xiii")
         || title_lower.contains("super 13")
         || title_lower.contains("elite 1")
         || title_lower.contains("élite 1");
 
-    // 2. Round indicators (j1, j2, ..., journee, journée)
     let has_round = title_lower.contains("journée")
         || title_lower.contains("journee")
         || (1..=22).any(|round| {
@@ -177,14 +176,12 @@ pub fn is_match_video(host_club: &Club, video: &YouTubeVideo) -> bool {
                 || title_lower.contains(&format!("j {}", round))
         });
 
-    // 3. Match indicators
     let has_match_keyword = title_lower.contains("match")
         || title_lower.contains("direct")
         || title_lower.contains("live")
         || title_lower.contains("diffusion")
         || title_lower.contains("replay");
 
-    // 4. Opponent detection (does the title mention any other club in Super XIII?)
     let mentions_opponent = CLUBS.iter().any(|c| {
         c.slug != host_club.slug
             && (title_lower.contains(&c.name.to_lowercase())
@@ -196,9 +193,6 @@ pub fn is_match_video(host_club: &Club, video: &YouTubeVideo) -> bool {
         || title_lower.contains(" contre ")
         || title_lower.contains(" - ");
 
-    // It's a match broadcast if:
-    // (Competition or Round) AND (Opponent or Match keyword or "vs")
-    // OR (Opponent AND (Match keyword or "vs"))
     if (has_competition || has_round) && (mentions_opponent || has_match_keyword || has_vs) {
         return true;
     }
@@ -207,7 +201,6 @@ pub fn is_match_video(host_club: &Club, video: &YouTubeVideo) -> bool {
         return true;
     }
 
-    // Explicit Super XIII match stream title (like Carcassonne: "SUPER XIII | Carcassonne XIII V Lézignan XIII")
     if has_competition && has_vs {
         return true;
     }
@@ -215,27 +208,24 @@ pub fn is_match_video(host_club: &Club, video: &YouTubeVideo) -> bool {
     false
 }
 
-/// Scans YouTube channels of all 11 Super XIII clubs for newly posted match broadcasts
+/// Scans YouTube channels of all 11 Super XIII clubs for newly posted match broadcasts.
 pub fn scan_super_xiii_youtube_channels(
     client: &Client,
     state: &mut AppState,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    println!("🏴‍☠️ [YouTube Scanner] Scanning 11 Super XIII club channels for home match broadcasts...");
+    info!("🏴‍☠️ [YouTube Scanner] Scanning 11 Super XIII club channels for home match broadcasts...");
     let mut new_videos_count = 0;
 
     for club in CLUBS {
-        println!(
-            "  📺 Checking channel for {} ({}) - {}",
+        info!(
+            "📺 Checking channel for {} ({}) - {}",
             club.name, club.emoji, club.yt_handle
         );
 
         let videos = match fetch_channel_videos(client, club.yt_channel_id) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!(
-                    "    ⚠️ Error fetching YouTube feed for {}: {}",
-                    club.name, e
-                );
+                warn!("Error fetching YouTube feed for {}: {}", club.name, e);
                 continue;
             }
         };
@@ -246,8 +236,8 @@ pub fn scan_super_xiii_youtube_channels(
             }
 
             if is_match_video(club, &video) {
-                println!(
-                    "    🔥 NEW MATCH DETECTED for {}: \"{}\" ({})",
+                info!(
+                    "🔥 NEW MATCH DETECTED for {}: \"{}\" ({})",
                     club.name, video.title, video.link
                 );
 
@@ -257,29 +247,26 @@ pub fn scan_super_xiii_youtube_channels(
                 );
 
                 if let Err(e) = send_discord_alert(client, &message) {
-                    eprintln!("    ⚠️ Error sending YouTube alert to Discord: {}", e);
+                    warn!("Error sending YouTube alert to Discord: {}", e);
                 } else {
-                    println!("    ✅ Alert sent to Discord!");
+                    info!("✅ Alert sent to Discord!");
                     new_videos_count += 1;
                     state.sent_youtube_videos.insert(video.video_id.clone());
-                    // Brief pause to maintain good etiquette with Discord webhooks
                     thread::sleep(Duration::from_secs(2));
                 }
             } else {
-                // Not a match stream (e.g. talk show, interview), remember it so we don't re-evaluate
                 state.sent_youtube_videos.insert(video.video_id.clone());
             }
         }
 
-        // Small delay between checking YouTube feeds
         thread::sleep(Duration::from_millis(500));
     }
 
     if let Err(e) = state.save() {
-        eprintln!("⚠️ Failed to save state after YouTube scan: {}", e);
+        warn!("Failed to save state after YouTube scan: {}", e);
     }
 
-    println!(
+    info!(
         "🏴‍☠️ [YouTube Scanner] Scan completed! {} new match stream(s) alerted.",
         new_videos_count
     );
@@ -293,9 +280,8 @@ mod tests {
 
     #[test]
     fn test_is_match_video_detection() {
-        let carcassonne = &CLUBS[2]; // Carcassonne
+        let carcassonne = &CLUBS[2];
 
-        // Live stream / Replay
         let v1 = YouTubeVideo {
             video_id: "3WgCfirniC4".to_string(),
             title: "🟡⚫️𝐒𝐔𝐏𝐄𝐑 𝐗𝐈𝐈𝐈 | Carcassonne XIII V Lézignan XIII".to_string(),
@@ -304,7 +290,6 @@ mod tests {
         };
         assert!(is_match_video(carcassonne, &v1));
 
-        // J1 match against Saint-Gaudens
         let v2 = YouTubeVideo {
             video_id: "u4vHiRsnygA".to_string(),
             title: "J1 SUPER XIII RC SAINT GAUDENS VS CARCASSONNE XIII".to_string(),
@@ -313,7 +298,6 @@ mod tests {
         };
         assert!(is_match_video(carcassonne, &v2));
 
-        // Talk show / interview (NOT a match)
         let v3 = YouTubeVideo {
             video_id: "hNpa409_xG8".to_string(),
             title: "🎥 [Numéro 3] PARLONS CARCASSONNE XIII ! 🏉".to_string(),

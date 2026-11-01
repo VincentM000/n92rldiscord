@@ -52,7 +52,13 @@ pub const CLUBS: &[Club] = &[
         emoji: "🐯",
         yt_channel_id: "UCxiOpJg24t0oCaPIFkI4ZuA",
         yt_handle: "@albirugbyleaguexiii",
-        aliases: &["albi", "tigres", "albi rl", "albi rl xiii", "albi rugby league"],
+        aliases: &[
+            "albi",
+            "tigres",
+            "albi rl",
+            "albi rl xiii",
+            "albi rugby league",
+        ],
     },
     Club {
         slug: "limoux",
