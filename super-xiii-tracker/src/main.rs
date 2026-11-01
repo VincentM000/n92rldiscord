@@ -179,6 +179,22 @@ fn check_ffr13_competition(
     let (_rows, current_ladder) = parse_ranking_table(&response);
     let matches = parse_all_matches(&response);
 
+    if state.completed_matches.is_empty() {
+        for m in &matches {
+            if m.is_finished() {
+                state.completed_matches.insert(m.id);
+                state.alerted_pre_matches.insert(m.id);
+            }
+        }
+        if !state.completed_matches.is_empty() {
+            info!(
+                "⚓ Initialisation silencieuse de {} matchs déjà terminés (anti-spam).",
+                state.completed_matches.len()
+            );
+            let _ = state.save();
+        }
+    }
+
     check_upcoming_prematch_streams(client, state, &matches);
 
     let mut newly_finished = Vec::new();

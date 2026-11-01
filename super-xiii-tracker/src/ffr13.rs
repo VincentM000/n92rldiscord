@@ -1,6 +1,6 @@
 use crate::clubs::get_club_display;
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday};
-use log::info;
+use log::{info, warn};
 use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
 use scraper::{Html, Selector};
 use serde_json::Value;
@@ -190,21 +190,17 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
         None => return matches,
     };
 
-    let remaining = &html[start_idx..];
-    let end_idx = match remaining
-        .find(";\r\n")
-        .or_else(|| remaining.find(";\n"))
-        .or_else(|| remaining.find("};").map(|i| i + 1))
-        .or_else(|| remaining.find(';'))
+    let remaining = html[start_idx..].trim_start();
+    let json_data: Value = match serde_json::Deserializer::from_str(remaining)
+        .into_iter::<Value>()
+        .next()
     {
-        Some(idx) => idx,
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
+            warn!("Erreur de parsing JSON dans jsonContent FFR13 : {}", e);
+            return matches;
+        }
         None => return matches,
-    };
-
-    let json_str = remaining[..end_idx].trim();
-    let json_data: Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return matches,
     };
 
     let map = match json_data.as_object() {
@@ -536,5 +532,17 @@ mod tests {
         assert_eq!(rows[0].points, 6);
         assert!(ladder_msg
             .contains("**1.** 🦬 **SO Avignon XIII** • **6 pts** *(V:2 N:0 D:0)* • Diff: +13"));
+    }
+
+    #[test]
+    fn test_parse_all_matches_stream_deserializer() {
+        let mock_html = "<html><script>\n            var jsonContent = {\"5191\":[{\"id\":12639,\"journee_id\":5191,\"num_rencontre\":\"26103176\",\"dt_rencontre\":\"2026-11-01\",\"time_rencontre\":\"16:30\",\"equipe_domicile\":{\"lb_equipe\":\"Carcassonne XIII\"},\"equipe_visiteur\":{\"lb_equipe\":\"FC Lézignan XIII\"},\"resultat_domicile\":null,\"resultat_visiteur\":null,\"statut_match_id\":4,\"lb_stade\":\"STADE ALBERT DOMEC\",\"num_journee\":\"2\"}]};\n            var currentJourneeId = 5191;\r\n</script></html>";
+        let matches = parse_all_matches(mock_html);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, 12639);
+        assert_eq!(matches[0].home_team, "Carcassonne XIII");
+        assert_eq!(matches[0].away_team, "FC Lézignan XIII");
+        assert_eq!(matches[0].time_str, "16:30");
+        assert!(matches[0].kickoff.is_some());
     }
 }
