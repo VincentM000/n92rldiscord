@@ -203,41 +203,51 @@ fn check_ffr13_competition(
     for m in &matches {
         if m.is_finished() && !state.completed_matches.contains(&m.id) {
             newly_finished.push(m.clone());
+        } else if m.has_score() && !m.is_finished() && !state.completed_matches.contains(&m.id) {
+            info!(
+                "⏳ Score intermédiaire détecté pour {} vs {} ({:?}-{:?}) avant la fin réglementaire (1h50) — publication différée.",
+                m.home_team, m.away_team, m.score_home, m.score_away
+            );
         }
     }
 
-    for m in newly_finished {
-        let result_msg = format_match_result_message(&m);
-        info!(
-            "🏁 Nouveau résultat détecté ! Envoi à Discord :\n{}",
-            result_msg
-        );
+    let ladder_has_changed = !current_ladder.is_empty()
+        && !state.last_ladder.is_empty()
+        && current_ladder != state.last_ladder;
 
-        if let Err(e) = send_discord_alert(client, &result_msg) {
-            warn!("Échec de l'envoi du score à Discord : {}", e);
-        }
+    if !newly_finished.is_empty() {
+        if !ladder_has_changed && !state.last_ladder.is_empty() {
+            info!(
+                "🛡️ Garde-fou actif : {} match(s) terminé(s) détecté(s), mais le classement FFR13 n'a pas encore été mis à jour. Attente du prochain cycle...",
+                newly_finished.len()
+            );
+        } else {
+            for m in newly_finished {
+                let result_msg = format_match_result_message(&m);
+                info!(
+                    "🏁 Nouveau résultat final validé (avec évolution du classement) ! Envoi à Discord :\n{}",
+                    result_msg
+                );
 
-        thread::sleep(Duration::from_secs(2));
+                if let Err(e) = send_discord_alert(client, &result_msg) {
+                    warn!("Échec de l'envoi du score à Discord : {}", e);
+                }
 
-        if !current_ladder.is_empty() {
-            info!("🏆 Envoi du classement mis à jour à Discord...");
-            if let Err(e) = send_discord_alert(client, &current_ladder) {
-                warn!("Échec de l'envoi du classement : {}", e);
+                thread::sleep(Duration::from_secs(2));
+
+                if !current_ladder.is_empty() {
+                    info!("🏆 Envoi du classement mis à jour à Discord...");
+                    if let Err(e) = send_discord_alert(client, &current_ladder) {
+                        warn!("Échec de l'envoi du classement : {}", e);
+                    }
+                    state.last_ladder = current_ladder.clone();
+                }
+
+                state.completed_matches.insert(m.id);
+                let _ = state.save();
             }
-            state.last_ladder = current_ladder.clone();
         }
-
-        state.completed_matches.insert(m.id);
-        let _ = state.save();
-    }
-
-    if !current_ladder.is_empty() && current_ladder != state.last_ladder {
-        if !state.last_ladder.is_empty() {
-            info!("📊 Évolution du classement détectée hors fin de match ! Envoi à Discord...");
-            if let Err(e) = send_discord_alert(client, &current_ladder) {
-                warn!("Échec de l'envoi du classement : {}", e);
-            }
-        }
+    } else if !current_ladder.is_empty() && state.last_ladder.is_empty() {
         state.last_ladder = current_ladder;
         let _ = state.save();
     }

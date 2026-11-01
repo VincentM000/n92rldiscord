@@ -93,9 +93,29 @@ pub struct FfrMatch {
     pub stadium: String,
 }
 
+/// Minimum elapsed time (in seconds) after kickoff before a score can be considered final (1h50m = 6600s).
+/// Prevents half-time or live intermediate scores (e.g. at H+50m) from being mistaken for final results.
+pub const MIN_MATCH_DURATION_SECS: i64 = 6600;
+
 impl FfrMatch {
-    pub fn is_finished(&self) -> bool {
+    pub fn has_score(&self) -> bool {
         self.score_home.is_some() && self.score_away.is_some()
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.is_finished_at(paris_now())
+    }
+
+    pub fn is_finished_at(&self, now: DateTime<FixedOffset>) -> bool {
+        if !self.has_score() {
+            return false;
+        }
+        if let Some(kickoff) = self.kickoff {
+            let elapsed_secs = now.signed_duration_since(kickoff).num_seconds();
+            elapsed_secs >= MIN_MATCH_DURATION_SECS
+        } else {
+            true
+        }
     }
 }
 
@@ -295,12 +315,19 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
                 is_prematch_window = true;
             }
 
-            if (-8100..=0).contains(&diff_secs) && !m.is_finished() {
+            if (-8100..=0).contains(&diff_secs) && !m.is_finished_at(now) {
                 is_match_live_now = true;
-                info!(
-                    "🏉 Match en cours : {} vs {} (coup d'envoi à {}, heure de Paris)",
-                    m.home_team, m.away_team, m.time_str
-                );
+                if let (Some(sh), Some(sa)) = (m.score_home, m.score_away) {
+                    info!(
+                        "🏉 Match en cours : {} vs {} (score provisoire : {} - {}, coup d'envoi à {})",
+                        m.home_team, m.away_team, sh, sa, m.time_str
+                    );
+                } else {
+                    info!(
+                        "🏉 Match en cours : {} vs {} (coup d'envoi à {}, heure de Paris)",
+                        m.home_team, m.away_team, m.time_str
+                    );
+                }
             }
 
             if diff_secs > 0 && !m.is_finished() {
@@ -565,5 +592,33 @@ mod tests {
         assert_eq!(matches[0].away_team, "FC Lézignan XIII");
         assert_eq!(matches[0].time_str, "16:30");
         assert!(matches[0].kickoff.is_some());
+    }
+
+    #[test]
+    fn test_halftime_score_not_treated_as_finished() {
+        let kickoff = parse_paris_datetime("2026-11-01", "16:30").unwrap();
+        let m = FfrMatch {
+            id: 12639,
+            num_rencontre: "26103176".to_string(),
+            round: "2".to_string(),
+            date_str: "2026-11-01".to_string(),
+            time_str: "16:30".to_string(),
+            kickoff: Some(kickoff),
+            home_team: "Carcassonne XIII".to_string(),
+            away_team: "FC Lézignan XIII".to_string(),
+            score_home: Some(12),
+            score_away: Some(6),
+            status_id: Some(4),
+            stadium: "STADE ALBERT DOMEC".to_string(),
+        };
+
+        // At 17:22 (52 mins after kickoff -> half-time), must NOT be considered finished
+        let at_17_22 = parse_paris_datetime("2026-11-01", "17:22").unwrap();
+        assert!(m.has_score());
+        assert!(!m.is_finished_at(at_17_22));
+
+        // At 18:25 (1h55m after kickoff -> full-time), MUST be considered finished
+        let at_18_25 = parse_paris_datetime("2026-11-01", "18:25").unwrap();
+        assert!(m.is_finished_at(at_18_25));
     }
 }
