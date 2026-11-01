@@ -5,9 +5,9 @@ mod youtube;
 
 use chrono::{Datelike, Weekday};
 use ffr13::{
-    calculate_adaptive_sleep, format_live_started_alert_message, format_match_result_message,
-    format_prematch_alert_message, get_matches_in_prematch_window, paris_now, parse_all_matches,
-    parse_ranking_table, FFR13_SUPER_XIII_URL,
+    apply_uncounted_matches_to_ladder, calculate_adaptive_sleep, format_live_started_alert_message,
+    format_match_result_message, format_prematch_alert_message, get_matches_in_prematch_window,
+    paris_now, parse_all_matches, parse_ranking_table, FFR13_SUPER_XIII_URL,
 };
 use log::{info, warn};
 use pirate_utils::{apply_jitter, build_http_client, send_discord_alert};
@@ -177,7 +177,7 @@ fn check_ffr13_competition(
     info!("📡 Vigie FFR13 : consultation de la page Super XIII...");
     let response = client.get(FFR13_SUPER_XIII_URL).send()?.text()?;
 
-    let (_rows, current_ladder) = parse_ranking_table(&response);
+    let (mut rows, mut current_ladder) = parse_ranking_table(&response);
     let matches = parse_all_matches(&response);
 
     if state.completed_matches.is_empty() {
@@ -211,43 +211,38 @@ fn check_ffr13_competition(
         }
     }
 
-    let ladder_has_changed = !current_ladder.is_empty()
-        && !state.last_ladder.is_empty()
-        && current_ladder != state.last_ladder;
-
     if !newly_finished.is_empty() {
-        if !ladder_has_changed && !state.last_ladder.is_empty() {
-            info!(
-                "🛡️ Garde-fou actif : {} match(s) terminé(s) détecté(s), mais le classement FFR13 n'a pas encore été mis à jour. Attente du prochain cycle...",
-                newly_finished.len()
-            );
-        } else {
-            for m in newly_finished {
-                let result_msg = format_match_result_message(&m);
-                info!(
-                    "🏁 Nouveau résultat final validé (avec évolution du classement) ! Envoi à Discord :\n{}",
-                    result_msg
-                );
-
-                if let Err(e) = send_discord_alert(client, &result_msg) {
-                    warn!("Échec de l'envoi du score à Discord : {}", e);
-                }
-
-                thread::sleep(Duration::from_secs(2));
-
-                if !current_ladder.is_empty() {
-                    info!("🏆 Envoi du classement mis à jour à Discord...");
-                    if let Err(e) = send_discord_alert(client, &current_ladder) {
-                        warn!("Échec de l'envoi du classement : {}", e);
-                    }
-                    state.last_ladder = current_ladder.clone();
-                }
-
-                state.completed_matches.insert(m.id);
-                let _ = state.save();
-            }
+        // Si la FFR13 n'a pas encore mis à jour son classement HTML, le programme Rust calcule lui-même le nouveau classement
+        if !rows.is_empty() {
+            current_ladder =
+                apply_uncounted_matches_to_ladder(&mut rows, &matches, &newly_finished);
         }
-    } else if !current_ladder.is_empty() && state.last_ladder.is_empty() {
+
+        for m in newly_finished {
+            let result_msg = format_match_result_message(&m);
+            info!(
+                "🏁 Nouveau résultat final validé ! Envoi à Discord :\n{}",
+                result_msg
+            );
+
+            if let Err(e) = send_discord_alert(client, &result_msg) {
+                warn!("Échec de l'envoi du score à Discord : {}", e);
+            }
+
+            thread::sleep(Duration::from_secs(2));
+
+            if !current_ladder.is_empty() {
+                info!("🏆 Envoi du classement Super XIII mis à jour à Discord...");
+                if let Err(e) = send_discord_alert(client, &current_ladder) {
+                    warn!("Échec de l'envoi du classement : {}", e);
+                }
+                state.last_ladder = current_ladder.clone();
+            }
+
+            state.completed_matches.insert(m.id);
+            let _ = state.save();
+        }
+    } else if !current_ladder.is_empty() && current_ladder != state.last_ladder {
         state.last_ladder = current_ladder;
         let _ = state.save();
     }

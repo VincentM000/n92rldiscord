@@ -200,6 +200,108 @@ pub fn parse_ranking_table(html: &str) -> (Vec<LadderRow>, String) {
     (rows, ladder_message)
 }
 
+fn parse_diff_from_suffix(suffix: &Option<String>) -> i32 {
+    suffix
+        .as_deref()
+        .and_then(|s| s.split("Diff:").nth(1))
+        .and_then(|v| v.trim().trim_start_matches('+').parse::<i32>().ok())
+        .unwrap_or(0)
+}
+
+fn format_diff_suffix(diff: i32) -> String {
+    if diff > 0 {
+        format!("• Diff: +{}", diff)
+    } else {
+        format!("• Diff: {}", diff)
+    }
+}
+
+/// Updates the standings in Rust with any newly finished matches that FFR13 has not yet
+/// incorporated into its HTML `table.ranking`, then re-sorts and formats the ladder.
+pub fn apply_uncounted_matches_to_ladder(
+    rows: &mut [LadderRow],
+    all_matches: &[FfrMatch],
+    newly_finished: &[FfrMatch],
+) -> String {
+    // Count total finished matches per canonical team name across the season
+    let mut finished_count_by_team: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
+    for m in all_matches {
+        if m.is_finished() {
+            let (home_name, _) = get_club_display(&m.home_team);
+            let (away_name, _) = get_club_display(&m.away_team);
+            *finished_count_by_team.entry(home_name).or_insert(0) += 1;
+            *finished_count_by_team.entry(away_name).or_insert(0) += 1;
+        }
+    }
+
+    for m in newly_finished {
+        let (Some(sh), Some(sa)) = (m.score_home, m.score_away) else {
+            continue;
+        };
+        let (home_name, _) = get_club_display(&m.home_team);
+        let (away_name, _) = get_club_display(&m.away_team);
+        let diff_delta = (sh - sa) as i32;
+
+        // Update home team if FFR13 table has fewer played games than finished matches in JSON
+        if let Some(home_row) = rows.iter_mut().find(|r| r.team_name == home_name) {
+            let played_in_table = home_row.wins + home_row.draws + home_row.losses;
+            let expected_played = finished_count_by_team.get(&home_name).copied().unwrap_or(0);
+            if played_in_table < expected_played {
+                if sh > sa {
+                    home_row.wins += 1;
+                    home_row.points += 3;
+                } else if sh == sa {
+                    home_row.draws += 1;
+                    home_row.points += 2;
+                } else {
+                    home_row.losses += 1;
+                    if (sa - sh) <= 12 {
+                        home_row.points += 1; // Bonus défensif Super XIII (défaite <= 12 pts)
+                    }
+                }
+                let new_diff = parse_diff_from_suffix(&home_row.suffix) + diff_delta;
+                home_row.suffix = Some(format_diff_suffix(new_diff));
+            }
+        }
+
+        // Update away team if FFR13 table has fewer played games than finished matches in JSON
+        if let Some(away_row) = rows.iter_mut().find(|r| r.team_name == away_name) {
+            let played_in_table = away_row.wins + away_row.draws + away_row.losses;
+            let expected_played = finished_count_by_team.get(&away_name).copied().unwrap_or(0);
+            if played_in_table < expected_played {
+                if sa > sh {
+                    away_row.wins += 1;
+                    away_row.points += 3;
+                } else if sa == sh {
+                    away_row.draws += 1;
+                    away_row.points += 2;
+                } else {
+                    away_row.losses += 1;
+                    if (sh - sa) <= 12 {
+                        away_row.points += 1; // Bonus défensif Super XIII (défaite <= 12 pts)
+                    }
+                }
+                let new_diff = parse_diff_from_suffix(&away_row.suffix) - diff_delta;
+                away_row.suffix = Some(format_diff_suffix(new_diff));
+            }
+        }
+    }
+
+    // Sort by points DESC, then point differential DESC
+    rows.sort_by(|a, b| {
+        let diff_a = parse_diff_from_suffix(&a.suffix);
+        let diff_b = parse_diff_from_suffix(&b.suffix);
+        b.points.cmp(&a.points).then_with(|| diff_b.cmp(&diff_a))
+    });
+
+    for (idx, row) in rows.iter_mut().enumerate() {
+        row.rank = idx + 1;
+    }
+
+    format_ladder("CLASSEMENT SUPER XIII", rows)
+}
+
 /// Parse matches from the embedded `jsonContent` JavaScript variable.
 pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
     let mut matches = Vec::new();
@@ -620,5 +722,89 @@ mod tests {
         // At 18:25 (1h55m after kickoff -> full-time), MUST be considered finished
         let at_18_25 = parse_paris_datetime("2026-11-01", "18:25").unwrap();
         assert!(m.is_finished_at(at_18_25));
+    }
+
+    #[test]
+    fn test_apply_uncounted_matches_to_ladder() {
+        let mut rows = vec![
+            LadderRow {
+                rank: 1,
+                team_name: "Carcassonne XIII".to_string(),
+                emoji: "🐤".to_string(),
+                points: 3,
+                wins: 1,
+                draws: 0,
+                losses: 0,
+                suffix: Some("• Diff: +52".to_string()),
+            },
+            LadderRow {
+                rank: 2,
+                team_name: "FC Lézignan XIII".to_string(),
+                emoji: "🟢".to_string(),
+                points: 1,
+                wins: 0,
+                draws: 0,
+                losses: 1,
+                suffix: Some("• Diff: -10".to_string()),
+            },
+        ];
+
+        let past_j1_carc = FfrMatch {
+            id: 12627,
+            num_rencontre: "1".to_string(),
+            round: "1".to_string(),
+            date_str: "2026-10-24".to_string(),
+            time_str: "18:00".to_string(),
+            kickoff: None,
+            home_team: "RC ST GAUDENS".to_string(),
+            away_team: "Carcassonne XIII".to_string(),
+            score_home: Some(0),
+            score_away: Some(52),
+            status_id: Some(1),
+            stadium: "".to_string(),
+        };
+        let past_j1_fcl = FfrMatch {
+            id: 12625,
+            num_rencontre: "2".to_string(),
+            round: "1".to_string(),
+            date_str: "2026-10-24".to_string(),
+            time_str: "17:00".to_string(),
+            kickoff: None,
+            home_team: "FC Lézignan XIII".to_string(),
+            away_team: "Saint-Estève XIII Catalan".to_string(),
+            score_home: Some(18),
+            score_away: Some(28),
+            status_id: Some(1),
+            stadium: "".to_string(),
+        };
+        let new_j2 = FfrMatch {
+            id: 12639,
+            num_rencontre: "3".to_string(),
+            round: "2".to_string(),
+            date_str: "2026-11-01".to_string(),
+            time_str: "16:30".to_string(),
+            kickoff: None,
+            home_team: "Carcassonne XIII".to_string(),
+            away_team: "FC Lézignan XIII".to_string(),
+            score_home: Some(24),
+            score_away: Some(18),
+            status_id: Some(4),
+            stadium: "STADE ALBERT DOMEC".to_string(),
+        };
+
+        let all_matches = vec![past_j1_carc, past_j1_fcl, new_j2.clone()];
+        let updated = apply_uncounted_matches_to_ladder(&mut rows, &all_matches, &[new_j2]);
+
+        // Carcassonne gets +3 pts (3 -> 6), wins 1 -> 2, diff +52 + 6 = +58
+        assert_eq!(rows[0].team_name, "Carcassonne XIII");
+        assert_eq!(rows[0].points, 6);
+        assert_eq!(rows[0].wins, 2);
+        assert!(updated.contains("Diff: +58"));
+
+        // Lézignan loses by 6 (<= 12) -> +1 defensive bonus pt (1 -> 2), losses 1 -> 2, diff -10 - 6 = -16
+        assert_eq!(rows[1].team_name, "FC Lézignan XIII");
+        assert_eq!(rows[1].points, 2);
+        assert_eq!(rows[1].losses, 2);
+        assert!(updated.contains("Diff: -16"));
     }
 }
