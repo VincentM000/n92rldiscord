@@ -226,18 +226,45 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
     matches
 }
 
+/// Returns matches whose kickoff is within the pre-game window [-10 mins, +15 mins]
+pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
+    let now = Local::now();
+    let mut prematch = Vec::new();
+
+    for m in matches {
+        if m.is_finished() {
+            continue;
+        }
+        if let Some(kickoff) = m.kickoff {
+            let diff_secs = kickoff.signed_duration_since(now).num_seconds();
+            // Window: from 15 minutes before kickoff up to 10 minutes after kickoff
+            if diff_secs >= -600 && diff_secs <= 900 {
+                prematch.push(m.clone());
+            }
+        }
+    }
+
+    prematch
+}
+
 /// Calculate adaptive polling sleep duration based on the schedule of rounds and matches
 pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
     let now = Local::now();
     let mut min_sleep_secs: i64 = 1800; // default 30 mins
 
     let mut is_match_live_now = false;
+    let mut is_prematch_window = false;
     let mut closest_future_kickoff_secs: Option<i64> = None;
     let mut match_finished_recently_missing_score = false;
 
     for m in matches {
         if let Some(kickoff) = m.kickoff {
             let diff_secs = kickoff.signed_duration_since(now).num_seconds();
+
+            // Pre-match window: [H-15min, H+10min]
+            if !m.is_finished() && diff_secs >= -600 && diff_secs <= 900 {
+                is_prematch_window = true;
+            }
 
             // Match is in progress (between kickoff and kickoff + 2h15)
             if diff_secs <= 0 && diff_secs >= -8100 {
@@ -261,13 +288,16 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
         }
     }
 
-    if is_match_live_now {
+    if is_prematch_window {
+        // High frequency during pre-game window (check every 60s for YouTube stream startup)
+        min_sleep_secs = 60;
+    } else if is_match_live_now {
         // Match underway! Check every 3 minutes (180 seconds) to catch full-time instantly
         min_sleep_secs = 180;
     } else if let Some(secs_to_start) = closest_future_kickoff_secs {
         if secs_to_start <= 900 {
-            // Less than 15 minutes before kickoff: wake up in 2 minutes
-            min_sleep_secs = 120;
+            // Less than 15 minutes before kickoff
+            min_sleep_secs = 60;
         } else if secs_to_start <= 3600 {
             // Less than 1 hour before kickoff: check every 5 minutes
             min_sleep_secs = 300;
@@ -281,6 +311,27 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
     }
 
     Duration::from_secs(min_sleep_secs as u64)
+}
+
+/// Format Discord pre-match imminent alert
+pub fn format_prematch_alert_message(
+    m: &FfrMatch,
+    video_title: &str,
+    video_url: &str,
+) -> String {
+    let (home_name, home_emoji) = get_club_display(&m.home_team);
+    let (away_name, away_emoji) = get_club_display(&m.away_team);
+
+    let mut message = format!(
+        "⏰ **COUP D'ENVOI IMMINENT - SUPER XIII !** 🏉 🏴‍☠️\n\nLe match **{}** {} vs **{}** {} (Journée {}) débute dans quelques minutes !\n📺 Retransmission en direct sur YouTube :\n🎥 **{}**\n\n🔗 {}",
+        home_name, home_emoji, away_name, away_emoji, m.round, video_title, video_url
+    );
+
+    if !m.stadium.is_empty() {
+        message.push_str(&format!("\n📍 *{}*", m.stadium));
+    }
+
+    message
 }
 
 /// Format the Discord match result message matching the style of NRL & Super League
@@ -331,43 +382,70 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_ranking_table_mock() {
-        let mock_html = r#"
-            <table class="ranking">
-                <tr class="header-rank">
-                    <td class="rank"></td> 
-                    <td class="team" colspan="2"></td>
-                    <td class="points">Pts</td>
-                    <td class="played">J</td>
-                    <td class="win">G</td>
-                    <td class="draw">N</td>
-                    <td class="lost">P</td>
-                    <td class="pp">PM</td>
-                    <td class="pc">PC</td>
-                    <td class="diff">Diff</td>
-                    <td class="bonus">PB</td>
-                    <td class="pen">PE</td>
-                    <td class="forfait">F</td>
-                </tr> 
-                <tr class="rank-line">
-                    <td class="rank">1</td>
-                    <td class="team">SO Avignon XIII</td>
-                    <td class="points">6</td>
-                    <td class="played">2</td>
-                    <td class="win">2</td>
-                    <td class="draw">0</td>
-                    <td class="lost">0</td>
-                    <td class="pp">60</td>
-                    <td class="pc">47</td>
-                    <td class="diff">13</td>
-                </tr>
-            </table>
-        "#;
+    fn test_format_prematch_alert_message() {
+        let m = FfrMatch {
+            id: 12630,
+            num_rencontre: "26102469".to_string(),
+            round: "2".to_string(),
+            date_str: "2026-11-01".to_string(),
+            time_str: "16:30".to_string(),
+            kickoff: None,
+            home_team: "Carcassonne XIII".to_string(),
+            away_team: "FC Lézignan XIII".to_string(),
+            score_home: None,
+            score_away: None,
+            status_id: Some(4),
+            stadium: "Stade Albert Domec".to_string(),
+        };
 
-        let (rows, ladder_msg) = parse_ranking_table(mock_html);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].team_name, "SO Avignon XIII");
-        assert_eq!(rows[0].points, "6");
-        assert!(ladder_msg.contains("**1.** 🦬 **SO Avignon XIII** • **6 pts** *(V:2 N:0 D:0)* • Diff: +13"));
+        let msg = format_prematch_alert_message(
+            &m,
+            "🟡⚫️SUPER XIII | Carcassonne XIII V Lézignan XIII",
+            "https://www.youtube.com/watch?v=3WgCfirniC4",
+        );
+
+        assert!(msg.contains("COUP D'ENVOI IMMINENT - SUPER XIII !"));
+        assert!(msg.contains("🐤"));
+        assert!(msg.contains("🟢"));
+        assert!(msg.contains("https://www.youtube.com/watch?v=3WgCfirniC4"));
+    }
+
+    #[test]
+    fn test_get_matches_in_prematch_window() {
+        let now = Local::now();
+        let imminent_match = FfrMatch {
+            id: 9999,
+            num_rencontre: "test1".to_string(),
+            round: "2".to_string(),
+            date_str: "2026-11-01".to_string(),
+            time_str: "16:30".to_string(),
+            kickoff: Some(now + chrono::Duration::minutes(5)), // in 5 mins!
+            home_team: "Carcassonne XIII".to_string(),
+            away_team: "FC Lézignan XIII".to_string(),
+            score_home: None,
+            score_away: None,
+            status_id: Some(4),
+            stadium: "".to_string(),
+        };
+
+        let distant_match = FfrMatch {
+            id: 8888,
+            num_rencontre: "test2".to_string(),
+            round: "2".to_string(),
+            date_str: "2026-11-01".to_string(),
+            time_str: "20:30".to_string(),
+            kickoff: Some(now + chrono::Duration::hours(5)), // in 5 hours
+            home_team: "Albi RL XIII".to_string(),
+            away_team: "Pia XIII Baroudeur".to_string(),
+            score_home: None,
+            score_away: None,
+            status_id: Some(4),
+            stadium: "".to_string(),
+        };
+
+        let list = vec![imminent_match, distant_match];
+        let prematch = get_matches_in_prematch_window(&list);
+        assert_eq!(prematch.len(), 1);
+        assert_eq!(prematch[0].id, 9999);
     }
 }

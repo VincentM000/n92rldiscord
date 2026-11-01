@@ -9,6 +9,8 @@ const STATE_FILE: &str = "super_xiii_state.json";
 pub struct AppState {
     pub completed_matches: HashSet<i64>,
     pub sent_youtube_videos: HashSet<String>,
+    #[serde(default)]
+    pub alerted_pre_matches: HashSet<i64>,
     pub last_ladder: String,
     pub last_yt_scan_date: Option<String>,
 }
@@ -18,6 +20,7 @@ impl Default for AppState {
         Self {
             completed_matches: HashSet::new(),
             sent_youtube_videos: HashSet::new(),
+            alerted_pre_matches: HashSet::new(),
             last_ladder: String::new(),
             last_yt_scan_date: None,
         }

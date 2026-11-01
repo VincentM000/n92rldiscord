@@ -8,6 +8,84 @@ use std::time::Duration;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
+pub struct LiveStreamDetails {
+    pub video_id: String,
+    pub title: String,
+    pub url: String,
+    pub is_live_now: bool,
+}
+
+fn extract_string_between<'a>(src: &'a str, start_delim: &str, end_delim: &str) -> Option<&'a str> {
+    let start = src.find(start_delim)? + start_delim.len();
+    let rest = &src[start..];
+    let end = rest.find(end_delim)?;
+    Some(&rest[..end])
+}
+
+/// Probes specifically the club's YouTube channel for an active live stream or scheduled waiting room
+pub fn check_club_live_stream(
+    client: &Client,
+    club: &Club,
+) -> Result<Option<LiveStreamDetails>, Box<dyn std::error::Error>> {
+    let live_url = format!("https://www.youtube.com/{}/live", club.yt_handle);
+
+    // 1. Probe the /live direct endpoint
+    let response_text = match client
+        .get(&live_url)
+        .header("Accept-Language", "fr-FR,fr;q=0.9")
+        .send()
+    {
+        Ok(res) => res.text().unwrap_or_default(),
+        Err(e) => {
+            eprintln!("    ⚠️ Error accessing {}/live: {}", club.yt_handle, e);
+            String::new()
+        }
+    };
+
+    if !response_text.is_empty()
+        && (response_text.contains("\"watchEndpoint\"")
+            || response_text.contains("liveBroadcastDetails"))
+    {
+        let video_id_opt = extract_string_between(&response_text, "\"watchEndpoint\":{\"videoId\":\"", "\"")
+            .or_else(|| extract_string_between(&response_text, "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=", "\""))
+            .or_else(|| extract_string_between(&response_text, "externalVideoId\":\"", "\""));
+
+        if let Some(video_id) = video_id_opt {
+            let title = extract_string_between(&response_text, "<meta property=\"og:title\" content=\"", "\"")
+                .or_else(|| extract_string_between(&response_text, "<title>", "</title>"))
+                .map(|s| s.replace(" - YouTube", "").trim().to_string())
+                .unwrap_or_else(|| format!("Match en direct de {}", club.name));
+
+            let is_live_now = response_text.contains("\"isLiveNow\":true") || response_text.contains("\"isLive\":true");
+
+            return Ok(Some(LiveStreamDetails {
+                video_id: video_id.to_string(),
+                title,
+                url: format!("https://www.youtube.com/watch?v={}", video_id),
+                is_live_now,
+            }));
+        }
+    }
+
+    // 2. Complementary check: inspect channel RSS feed for fresh videos published recently
+    if let Ok(videos) = fetch_channel_videos(client, club.yt_channel_id) {
+        if let Some(first) = videos.first() {
+            if is_match_video(club, first) {
+                return Ok(Some(LiveStreamDetails {
+                    video_id: first.video_id.clone(),
+                    title: first.title.clone(),
+                    url: first.link.clone(),
+                    is_live_now: true,
+                }));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct YouTubeVideo {
     pub video_id: String,
     pub title: String,

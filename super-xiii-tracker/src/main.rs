@@ -5,8 +5,8 @@ mod youtube;
 
 use chrono::{Datelike, Local, Weekday};
 use ffr13::{
-    calculate_adaptive_sleep, format_match_result_message, parse_all_matches,
-    parse_ranking_table, FFR13_SUPER_XIII_URL,
+    calculate_adaptive_sleep, format_match_result_message, format_prematch_alert_message,
+    get_matches_in_prematch_window, parse_all_matches, parse_ranking_table, FFR13_SUPER_XIII_URL,
 };
 use pirate_utils::send_discord_alert;
 use reqwest::blocking::Client;
@@ -38,6 +38,7 @@ fn main() {
     if show_status {
         println!("📊 État actuel du tracker Super XIII :");
         println!("  - Matchs terminés enregistrés : {}", state.completed_matches.len());
+        println!("  - Alertes avant-match envoyées : {}", state.alerted_pre_matches.len());
         println!("  - Vidéos YouTube enregistrées : {}", state.sent_youtube_videos.len());
         println!("  - Dernier scan YouTube : {:?}", state.last_yt_scan_date);
         return;
@@ -99,6 +100,7 @@ fn initialize_baseline(client: &Client, state: &mut AppState) {
             for m in matches {
                 if m.is_finished() {
                     state.completed_matches.insert(m.id);
+                    state.alerted_pre_matches.insert(m.id);
                     count += 1;
                 }
             }
@@ -175,7 +177,10 @@ fn check_ffr13_competition(
     // 2. Parse all rounds and matches
     let matches = parse_all_matches(&response);
 
-    // 3. Find newly completed matches
+    // 3. Check for upcoming pre-match live streams (window around kickoff)
+    check_upcoming_prematch_streams(client, state, &matches);
+
+    // 4. Find newly completed matches
     let mut newly_finished = Vec::new();
     for m in &matches {
         if m.is_finished() && !state.completed_matches.contains(&m.id) {
@@ -183,7 +188,7 @@ fn check_ffr13_competition(
         }
     }
 
-    // 4. Alert newly finished matches
+    // 5. Alert newly finished matches
     for m in newly_finished {
         let result_msg = format_match_result_message(&m);
         println!("🏁 Nouveau résultat détecté ! Envoi à Discord :\n{}", result_msg);
@@ -223,4 +228,67 @@ fn check_ffr13_competition(
     // 6. Calculate adaptive sleeping time using the matches calendar
     let sleep_duration = calculate_adaptive_sleep(&matches);
     Ok(sleep_duration)
+}
+
+/// Checks specifically if matches starting soon have a live stream waiting room or broadcast ready on YouTube
+fn check_upcoming_prematch_streams(
+    client: &Client,
+    state: &mut AppState,
+    matches: &[ffr13::FfrMatch],
+) {
+    let prematch_matches = get_matches_in_prematch_window(matches);
+    if prematch_matches.is_empty() {
+        return;
+    }
+
+    println!(
+        "⚡ [Radar Avant-match] Fenêtre active : {} match(s) approchant du coup d'envoi.",
+        prematch_matches.len()
+    );
+
+    for m in prematch_matches {
+        if state.alerted_pre_matches.contains(&m.id) {
+            continue;
+        }
+
+        if let Some(host_club) = clubs::find_club_by_name(&m.home_team) {
+            println!(
+                "  🔍 Vérification de la chaîne de {} ({}) pour un direct d'avant-match...",
+                host_club.name, host_club.yt_handle
+            );
+
+            match youtube::check_club_live_stream(client, host_club) {
+                Ok(Some(live)) => {
+                    println!(
+                        "  🚨 DIRECT DÉTECTÉ pour {} : \"{}\" ({})",
+                        host_club.name, live.title, live.url
+                    );
+
+                    let alert_msg = format_prematch_alert_message(&m, &live.title, &live.url);
+
+                    if let Err(e) = send_discord_alert(client, &alert_msg) {
+                        eprintln!("  ⚠️ Erreur lors de l'envoi de l'alerte avant-match : {}", e);
+                    } else {
+                        println!("  ✅ Alerte coup d'envoi imminent envoyée sur Discord !");
+                        state.alerted_pre_matches.insert(m.id);
+                        state.sent_youtube_videos.insert(live.video_id);
+                        let _ = state.save();
+                        thread::sleep(Duration::from_secs(2));
+                    }
+                }
+                Ok(None) => {
+                    println!(
+                        "  ⏳ Aucun flux en direct actif pour le moment sur {}.",
+                        host_club.yt_handle
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "  ⚠️ Erreur vérification live pour {} : {}",
+                        host_club.name, e
+                    );
+                }
+            }
+        }
+    }
 }
