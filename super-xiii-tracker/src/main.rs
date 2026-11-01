@@ -3,10 +3,11 @@ mod ffr13;
 mod state;
 mod youtube;
 
-use chrono::{Datelike, Local, Weekday};
+use chrono::{Datelike, Weekday};
 use ffr13::{
     calculate_adaptive_sleep, format_match_result_message, format_prematch_alert_message,
-    get_matches_in_prematch_window, parse_all_matches, parse_ranking_table, FFR13_SUPER_XIII_URL,
+    get_matches_in_prematch_window, paris_now, parse_all_matches, parse_ranking_table,
+    FFR13_SUPER_XIII_URL,
 };
 use log::{info, warn};
 use pirate_utils::{apply_jitter, build_http_client, send_discord_alert};
@@ -133,7 +134,7 @@ fn initialize_baseline(client: &Client, state: &mut AppState) {
         state.sent_youtube_videos.len()
     );
 
-    let today_str = Local::now().format("%Y-%m-%d").to_string();
+    let today_str = paris_now().format("%Y-%m-%d").to_string();
     state.last_yt_scan_date = Some(today_str);
 
     if let Err(e) = state.save() {
@@ -143,7 +144,7 @@ fn initialize_baseline(client: &Client, state: &mut AppState) {
 }
 
 fn check_daily_youtube(client: &Client, state: &mut AppState) {
-    let now = Local::now();
+    let now = paris_now();
     let weekday = now.weekday();
     let is_weekday = weekday != Weekday::Sat && weekday != Weekday::Sun;
     let today_str = now.format("%Y-%m-%d").to_string();
