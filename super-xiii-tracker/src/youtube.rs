@@ -63,8 +63,10 @@ pub fn parse_live_page_html(response_text: &str, club: &Club) -> Option<LiveStre
     .map(|s| s.replace(" - YouTube", "").trim().to_string())
     .unwrap_or_else(|| format!("Match en direct de {}", club.name));
 
-    let is_live_now =
-        response_text.contains("\"isLiveNow\":true") || response_text.contains("\"isLive\":true");
+    let is_live_now = response_text.contains("\"isLiveNow\":true")
+        || (response_text.contains("\"isLive\":true")
+            && !response_text.contains("\"isUpcoming\":true")
+            && !response_text.contains("\"isLiveNow\":false"));
 
     Some(LiveStreamDetails {
         video_id: video_id.to_string(),

@@ -257,7 +257,7 @@ pub fn parse_all_matches(html: &str) -> Vec<FfrMatch> {
     matches
 }
 
-/// Returns matches whose kickoff is within the pre-game window [-10 mins, +15 mins] (Paris time).
+/// Returns matches whose kickoff is within the pre-game/live-start window [-45 mins, +15 mins] (Paris time).
 pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
     let now = paris_now();
     let mut prematch = Vec::new();
@@ -268,7 +268,7 @@ pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
         }
         if let Some(kickoff) = m.kickoff {
             let diff_secs = kickoff.signed_duration_since(now).num_seconds();
-            if (-600..=900).contains(&diff_secs) {
+            if (-2700..=900).contains(&diff_secs) {
                 prematch.push(m.clone());
             }
         }
@@ -383,13 +383,34 @@ pub fn format_match_result_message(m: &FfrMatch) -> String {
     format_match_result(&result)
 }
 
-/// Formats Discord pre-match imminent alert.
+/// Formats Discord pre-match imminent alert (waiting room / upcoming).
 pub fn format_prematch_alert_message(m: &FfrMatch, video_title: &str, video_url: &str) -> String {
     let (home_name, home_emoji) = get_club_display(&m.home_team);
     let (away_name, away_emoji) = get_club_display(&m.away_team);
 
     let mut message = format!(
-        "⏰ **COUP D'ENVOI IMMINENT - SUPER XIII !** 🏉 🏴‍☠️\n\nLe match **{}** {} vs **{}** {} (Journée {}) débute dans quelques minutes !\n📺 Retransmission en direct sur YouTube :\n🎥 **{}**\n\n🔗 {}",
+        "⏰ **COUP D'ENVOI IMMINENT - SUPER XIII !** 🏉 🏴‍☠️\n\nLe match **{}** {} vs **{}** {} (Journée {}) débute dans quelques minutes !\n📺 Salle d'attente ouverte sur YouTube :\n🎥 **{}**\n\n🔗 {}",
+        home_name, home_emoji, away_name, away_emoji, m.round, video_title, video_url
+    );
+
+    if !m.stadium.is_empty() {
+        message.push_str(&format!("\n📍 *{}*", m.stadium));
+    }
+
+    message
+}
+
+/// Formats Discord alert when the live broadcast officially starts (`is_live_now == true`).
+pub fn format_live_started_alert_message(
+    m: &FfrMatch,
+    video_title: &str,
+    video_url: &str,
+) -> String {
+    let (home_name, home_emoji) = get_club_display(&m.home_team);
+    let (away_name, away_emoji) = get_club_display(&m.away_team);
+
+    let mut message = format!(
+        "⚔️ **LE MATCH EST EN DIRECT - SUPER XIII !** ⚔️ 🏴‍☠️\n\nLe coup d'envoi de **{}** {} vs **{}** {} (Journée {}) vient d'être donné !\n🔴 **La retransmission en direct a commencé sur YouTube :**\n🎥 **{}**\n\n🔗 {}",
         home_name, home_emoji, away_name, away_emoji, m.round, video_title, video_url
     );
 

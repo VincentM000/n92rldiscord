@@ -5,9 +5,9 @@ mod youtube;
 
 use chrono::{Datelike, Weekday};
 use ffr13::{
-    calculate_adaptive_sleep, format_match_result_message, format_prematch_alert_message,
-    get_matches_in_prematch_window, paris_now, parse_all_matches, parse_ranking_table,
-    FFR13_SUPER_XIII_URL,
+    calculate_adaptive_sleep, format_live_started_alert_message, format_match_result_message,
+    format_prematch_alert_message, get_matches_in_prematch_window, paris_now, parse_all_matches,
+    parse_ranking_table, FFR13_SUPER_XIII_URL,
 };
 use log::{info, warn};
 use pirate_utils::{apply_jitter, build_http_client, send_discord_alert};
@@ -107,6 +107,7 @@ fn initialize_baseline(client: &Client, state: &mut AppState) {
                 if m.is_finished() {
                     state.completed_matches.insert(m.id);
                     state.alerted_pre_matches.insert(m.id);
+                    state.alerted_live_matches.insert(m.id);
                     count += 1;
                 }
             }
@@ -184,6 +185,7 @@ fn check_ffr13_competition(
             if m.is_finished() {
                 state.completed_matches.insert(m.id);
                 state.alerted_pre_matches.insert(m.id);
+                state.alerted_live_matches.insert(m.id);
             }
         }
         if !state.completed_matches.is_empty() {
@@ -260,33 +262,59 @@ fn check_upcoming_prematch_streams(
     );
 
     for m in prematch_matches {
-        if state.alerted_pre_matches.contains(&m.id) {
+        if state.alerted_live_matches.contains(&m.id) {
             continue;
         }
 
         if let Some(host_club) = clubs::find_club_by_name(&m.home_team) {
             info!(
-                "🔍 Vérification de la chaîne de {} ({}) pour un direct d'avant-match...",
+                "🔍 Vérification de la chaîne de {} ({}) pour le direct...",
                 host_club.name, host_club.yt_handle
             );
 
             match youtube::check_club_live_stream(client, host_club) {
                 Ok(Some(live)) => {
-                    info!(
-                        "🚨 DIRECT DÉTECTÉ pour {} : \"{}\" ({})",
-                        host_club.name, live.title, live.url
-                    );
+                    if live.is_live_now {
+                        info!(
+                            "🔴 COUP D'ENVOI / DIRECT ACTIF DÉTECTÉ pour {} : \"{}\" ({})",
+                            host_club.name, live.title, live.url
+                        );
 
-                    let alert_msg = format_prematch_alert_message(&m, &live.title, &live.url);
+                        let alert_msg =
+                            format_live_started_alert_message(&m, &live.title, &live.url);
 
-                    if let Err(e) = send_discord_alert(client, &alert_msg) {
-                        warn!("Erreur lors de l'envoi de l'alerte avant-match : {}", e);
+                        if let Err(e) = send_discord_alert(client, &alert_msg) {
+                            warn!("Erreur lors de l'envoi de l'alerte direct actif : {}", e);
+                        } else {
+                            info!("✅ Alerte 'LE MATCH EST EN DIRECT' envoyée sur Discord !");
+                            state.alerted_pre_matches.insert(m.id);
+                            state.alerted_live_matches.insert(m.id);
+                            state.sent_youtube_videos.insert(live.video_id);
+                            let _ = state.save();
+                            thread::sleep(Duration::from_secs(2));
+                        }
+                    } else if !state.alerted_pre_matches.contains(&m.id) {
+                        info!(
+                            "🚨 SALLE D'ATTENTE DÉTECTÉE pour {} : \"{}\" ({})",
+                            host_club.name, live.title, live.url
+                        );
+
+                        let alert_msg = format_prematch_alert_message(&m, &live.title, &live.url);
+
+                        if let Err(e) = send_discord_alert(client, &alert_msg) {
+                            warn!("Erreur lors de l'envoi de l'alerte avant-match : {}", e);
+                        } else {
+                            info!("✅ Alerte coup d'envoi imminent envoyée sur Discord !");
+                            state.alerted_pre_matches.insert(m.id);
+                            state.sent_youtube_videos.insert(live.video_id);
+                            let _ = state.save();
+                            thread::sleep(Duration::from_secs(2));
+                        }
                     } else {
-                        info!("✅ Alerte coup d'envoi imminent envoyée sur Discord !");
-                        state.alerted_pre_matches.insert(m.id);
-                        state.sent_youtube_videos.insert(live.video_id);
-                        let _ = state.save();
-                        thread::sleep(Duration::from_secs(2));
+                        info!(
+                            "⏳ Salle d'attente déjà notifiée pour {}, en attente du passage en direct...",
+                            host_club.name
+                        );
                     }
                 }
                 Ok(None) => {

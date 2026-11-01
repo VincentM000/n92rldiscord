@@ -10,6 +10,8 @@ pub struct AppState {
     pub sent_youtube_videos: HashSet<String>,
     #[serde(default)]
     pub alerted_pre_matches: HashSet<i64>,
+    #[serde(default)]
+    pub alerted_live_matches: HashSet<i64>,
     pub last_ladder: String,
     pub last_yt_scan_date: Option<String>,
 }
