@@ -7,7 +7,8 @@ use chrono::{Datelike, Weekday};
 use ffr13::{
     apply_uncounted_matches_to_ladder, calculate_adaptive_sleep, format_live_started_alert_message,
     format_match_result_message, format_prematch_alert_message, get_matches_in_prematch_window,
-    paris_now, parse_all_matches, parse_ranking_table, FFR13_SUPER_XIII_URL,
+    is_official_table_up_to_date, paris_now, parse_all_matches, parse_ranking_table,
+    FFR13_SUPER_XIII_URL,
 };
 use log::{info, warn};
 use pirate_utils::{apply_jitter, build_http_client, send_discord_alert};
@@ -242,9 +243,27 @@ fn check_ffr13_competition(
             state.completed_matches.insert(m.id);
             let _ = state.save();
         }
-    } else if !current_ladder.is_empty() && current_ladder != state.last_ladder {
-        state.last_ladder = current_ladder;
-        let _ = state.save();
+    } else if !current_ladder.is_empty() {
+        if state.last_ladder.is_empty() {
+            state.last_ladder = current_ladder;
+            let _ = state.save();
+        } else if is_official_table_up_to_date(&rows, &matches)
+            && current_ladder != state.last_ladder
+        {
+            info!(
+                "📊 Le classement officiel de la FFR13 a été mis à jour et diffère du classement calculé ! Envoi du classement corrigé sur Discord..."
+            );
+            let correction_msg = format!(
+                "📊 **MISE À JOUR OFFICIELLE FFR13** 🏴‍☠️\nLa Fédération a actualisé le classement officiel du Super XIII :\n\n{}",
+                current_ladder
+            );
+            if let Err(e) = send_discord_alert(client, &correction_msg) {
+                warn!("Échec de l'envoi du classement corrigé : {}", e);
+            } else {
+                state.last_ladder = current_ladder;
+                let _ = state.save();
+            }
+        }
     }
 
     let sleep_duration = calculate_adaptive_sleep(&matches);

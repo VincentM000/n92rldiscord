@@ -216,6 +216,38 @@ fn format_diff_suffix(diff: i32) -> String {
     }
 }
 
+/// Checks whether the official FFR13 HTML `table.ranking` has incorporated all finished matches
+/// from `jsonContent` (i.e. no team in `rows` has fewer played games than its finished matches).
+pub fn is_official_table_up_to_date(rows: &[LadderRow], all_matches: &[FfrMatch]) -> bool {
+    if rows.is_empty() {
+        return false;
+    }
+
+    let mut finished_count_by_team: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
+    for m in all_matches {
+        if m.is_finished() {
+            let (home_name, _) = get_club_display(&m.home_team);
+            let (away_name, _) = get_club_display(&m.away_team);
+            *finished_count_by_team.entry(home_name).or_insert(0) += 1;
+            *finished_count_by_team.entry(away_name).or_insert(0) += 1;
+        }
+    }
+
+    for row in rows {
+        let played_in_table = row.wins + row.draws + row.losses;
+        let expected_played = finished_count_by_team
+            .get(&row.team_name)
+            .copied()
+            .unwrap_or(0);
+        if played_in_table < expected_played {
+            return false;
+        }
+    }
+
+    true
+}
+
 /// Updates the standings in Rust with any newly finished matches that FFR13 has not yet
 /// incorporated into its HTML `table.ranking`, then re-sorts and formats the ladder.
 pub fn apply_uncounted_matches_to_ladder(
@@ -400,9 +432,17 @@ pub fn get_matches_in_prematch_window(matches: &[FfrMatch]) -> Vec<FfrMatch> {
 }
 
 /// Calculates adaptive polling sleep duration based on the schedule of rounds and matches (Paris time).
+/// - On match days (or Sundays): polls frequently around matches and every 30m otherwise.
+/// - Outside match days (e.g. Mon-Fri with no match today): polls once per day (24h) to check
+///   for official FFR13 standings corrections and daily YouTube replays.
 pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
     let now = paris_now();
-    let mut min_sleep_secs: i64 = 1800;
+    let today_str = now.format("%Y-%m-%d").to_string();
+    let is_match_day =
+        now.weekday() == Weekday::Sun || matches.iter().any(|m| m.date_str == today_str);
+
+    // Default: 30 mins on match days / Sundays, 24 hours (86400s) on non-match days
+    let mut min_sleep_secs: i64 = if is_match_day { 1800 } else { 86400 };
 
     let mut is_match_live_now = false;
     let mut is_prematch_window = false;
@@ -479,8 +519,9 @@ pub fn calculate_adaptive_sleep(matches: &[FfrMatch]) -> Duration {
             // Between 1h and 2h before kickoff: poll every 15m, or wake up at H-1h
             min_sleep_secs = 900.min((secs_to_start - 3600).max(60));
         } else if secs_to_start <= 86400 {
-            // More than 2h before kickoff today: poll every 30m, or wake up at H-2h
-            min_sleep_secs = 1800.min((secs_to_start - 7200).max(60));
+            // Within 24h of kickoff: poll every 30m on match day, or wake up at H-2h
+            let base = if is_match_day { 1800 } else { 86400 };
+            min_sleep_secs = base.min((secs_to_start - 7200).max(60));
         }
     } else if match_finished_recently_missing_score {
         min_sleep_secs = 300;
@@ -793,7 +834,10 @@ mod tests {
         };
 
         let all_matches = vec![past_j1_carc, past_j1_fcl, new_j2.clone()];
+        assert!(!is_official_table_up_to_date(&rows, &all_matches));
+
         let updated = apply_uncounted_matches_to_ladder(&mut rows, &all_matches, &[new_j2]);
+        assert!(is_official_table_up_to_date(&rows, &all_matches));
 
         // Carcassonne gets +3 pts (3 -> 6), wins 1 -> 2, diff +52 + 6 = +58
         assert_eq!(rows[0].team_name, "Carcassonne XIII");
