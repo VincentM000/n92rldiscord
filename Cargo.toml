@@ -5,6 +5,7 @@ members = [
     "rss-feed-notifier",
     "nrl-tracker",
     "super-league-tracker",
+    "super-xiii-tracker",
     "pirate-utils"
 ]
 
