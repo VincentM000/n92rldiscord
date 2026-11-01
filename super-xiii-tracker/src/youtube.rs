@@ -25,6 +25,55 @@ pub struct YouTubeVideo {
     pub published: String,
 }
 
+/// Extracts the canonical video ID and title from a YouTube `/live` HTML page,
+/// ignoring sidebar recommendations (`watchEndpoint`).
+pub fn parse_live_page_html(response_text: &str, club: &Club) -> Option<LiveStreamDetails> {
+    if response_text.is_empty()
+        || (!response_text.contains("liveBroadcastDetails")
+            && !response_text.contains("\"isLive\":true")
+            && !response_text.contains("\"isUpcoming\":true")
+            && !response_text
+                .contains("<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v="))
+    {
+        return None;
+    }
+
+    // Never use "watchEndpoint" as it matches recommended videos from other channels in the sidebar.
+    let video_id = extract_between(
+        response_text,
+        "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=",
+        "\"",
+    )
+    .or_else(|| {
+        extract_between(
+            response_text,
+            "<meta property=\"og:url\" content=\"https://www.youtube.com/watch?v=",
+            "\"",
+        )
+    })
+    .or_else(|| extract_between(response_text, "\"videoDetails\":{\"videoId\":\"", "\""))
+    .or_else(|| extract_between(response_text, "\"externalVideoId\":\"", "\""))?;
+
+    let title = extract_between(
+        response_text,
+        "<meta property=\"og:title\" content=\"",
+        "\"",
+    )
+    .or_else(|| extract_between(response_text, "<title>", "</title>"))
+    .map(|s| s.replace(" - YouTube", "").trim().to_string())
+    .unwrap_or_else(|| format!("Match en direct de {}", club.name));
+
+    let is_live_now =
+        response_text.contains("\"isLiveNow\":true") || response_text.contains("\"isLive\":true");
+
+    Some(LiveStreamDetails {
+        video_id: video_id.to_string(),
+        title,
+        url: format!("https://www.youtube.com/watch?v={}", video_id),
+        is_live_now,
+    })
+}
+
 /// Probes specifically the club's YouTube channel for an active live stream or scheduled waiting room.
 pub fn check_club_live_stream(
     client: &Client,
@@ -44,41 +93,8 @@ pub fn check_club_live_stream(
         }
     };
 
-    if !response_text.is_empty()
-        && (response_text.contains("\"watchEndpoint\"")
-            || response_text.contains("liveBroadcastDetails"))
-    {
-        let video_id_opt =
-            extract_between(&response_text, "\"watchEndpoint\":{\"videoId\":\"", "\"")
-                .or_else(|| {
-                    extract_between(
-                        &response_text,
-                        "<link rel=\"canonical\" href=\"https://www.youtube.com/watch?v=",
-                        "\"",
-                    )
-                })
-                .or_else(|| extract_between(&response_text, "externalVideoId\":\"", "\""));
-
-        if let Some(video_id) = video_id_opt {
-            let title = extract_between(
-                &response_text,
-                "<meta property=\"og:title\" content=\"",
-                "\"",
-            )
-            .or_else(|| extract_between(&response_text, "<title>", "</title>"))
-            .map(|s| s.replace(" - YouTube", "").trim().to_string())
-            .unwrap_or_else(|| format!("Match en direct de {}", club.name));
-
-            let is_live_now = response_text.contains("\"isLiveNow\":true")
-                || response_text.contains("\"isLive\":true");
-
-            return Ok(Some(LiveStreamDetails {
-                video_id: video_id.to_string(),
-                title,
-                url: format!("https://www.youtube.com/watch?v={}", video_id),
-                is_live_now,
-            }));
-        }
+    if let Some(details) = parse_live_page_html(&response_text, club) {
+        return Ok(Some(details));
     }
 
     if let Ok(videos) = fetch_channel_videos(client, club.yt_channel_id) {
@@ -305,5 +321,28 @@ mod tests {
             published: "2026-10-28".to_string(),
         };
         assert!(!is_match_video(carcassonne, &v3));
+    }
+
+    #[test]
+    fn test_parse_live_page_ignores_sidebar_watch_endpoint() {
+        let carcassonne = &CLUBS[2];
+        let mock_html = r#"
+            <html>
+            <head>
+                <link rel="canonical" href="https://www.youtube.com/watch?v=3WgCfirniC4">
+                <meta property="og:title" content="🟡⚫️𝐒𝐔𝐏𝐄𝐑 𝐗𝐈𝐈𝐈 | Carcassonne XIII V Lézignan XIII">
+            </head>
+            <body>
+                <script>
+                    var ytInitialData = {"sidebar":{"watchEndpoint":{"videoId":"LSGTtQc4FoM"}},"liveBroadcastDetails":{"isLiveNow":false}};
+                </script>
+            </body>
+            </html>
+        "#;
+
+        let details = parse_live_page_html(mock_html, carcassonne).unwrap();
+        assert_eq!(details.video_id, "3WgCfirniC4");
+        assert_eq!(details.url, "https://www.youtube.com/watch?v=3WgCfirniC4");
+        assert!(details.title.contains("Carcassonne XIII"));
     }
 }
