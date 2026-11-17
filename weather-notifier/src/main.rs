@@ -1,11 +1,11 @@
 mod matches;
 mod weather;
 
-use chrono::{Datelike, Local, NaiveDate, Timelike, Weekday};
+use chrono::{Datelike, NaiveDate, Timelike, Weekday};
 use dotenvy::dotenv;
 use log::{info, warn};
 use matches::{load_matches_for_date, match_window_hours, Audience, MatchEntry};
-use pirate_utils::{build_http_client, send_discord_webhook_as};
+use pirate_utils::{build_http_client, paris_now, send_discord_webhook_as};
 use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::env;
@@ -229,7 +229,7 @@ fn dispatch_message(
 fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
-    let today = Local::now().date_naive();
+    let today = paris_now().date_naive();
     let target_date = if opts.today {
         today
     } else {

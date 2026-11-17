@@ -1,80 +1,14 @@
 use crate::clubs::get_club_display;
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday};
+use chrono::{DateTime, Datelike, FixedOffset, Weekday};
 use log::{info, warn};
+pub use pirate_utils::{paris_now, paris_offset_for_utc, parse_paris_datetime};
 use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
 use scraper::{Html, Selector};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::time::Duration;
 
 pub const FFR13_SUPER_XIII_URL: &str = "https://www.ffr13.fr/competitions/elite1/";
-
-/// Returns the last Sunday of a given year and month (for EU DST calculation).
-fn last_sunday_of_month(year: i32, month: u32) -> u32 {
-    let last_day = match month {
-        3 | 10 => 31,
-        _ => 30,
-    };
-    for day in (25..=last_day).rev() {
-        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
-            if date.weekday() == Weekday::Sun {
-                return day;
-            }
-        }
-    }
-    25
-}
-
-/// Computes the exact `Europe/Paris` UTC offset (`+01:00` CET in winter, `+02:00` CEST in summer)
-/// for a given UTC timestamp, without modifying the host system timezone.
-pub fn paris_offset_for_utc(utc_dt: DateTime<Utc>) -> FixedOffset {
-    let year = utc_dt.year();
-    let march_sunday = last_sunday_of_month(year, 3);
-    let oct_sunday = last_sunday_of_month(year, 10);
-
-    let dst_start = NaiveDate::from_ymd_opt(year, 3, march_sunday)
-        .and_then(|d| d.and_hms_opt(1, 0, 0))
-        .map(|naive| Utc.from_utc_datetime(&naive));
-    let dst_end = NaiveDate::from_ymd_opt(year, 10, oct_sunday)
-        .and_then(|d| d.and_hms_opt(1, 0, 0))
-        .map(|naive| Utc.from_utc_datetime(&naive));
-
-    let is_summer = match (dst_start, dst_end) {
-        (Some(start), Some(end)) => utc_dt >= start && utc_dt < end,
-        _ => false,
-    };
-
-    if is_summer {
-        FixedOffset::east_opt(2 * 3600).unwrap()
-    } else {
-        FixedOffset::east_opt(3600).unwrap()
-    }
-}
-
-/// Returns the current date and time in `Europe/Paris` timezone.
-pub fn paris_now() -> DateTime<FixedOffset> {
-    let now_utc = Utc::now();
-    let offset = paris_offset_for_utc(now_utc);
-    now_utc.with_timezone(&offset)
-}
-
-/// Parses a French local date (`YYYY-MM-DD`) and time (`HH:MM` or `HH:MM:SS`) into `Europe/Paris` `DateTime`.
-pub fn parse_paris_datetime(date_str: &str, time_str: &str) -> Option<DateTime<FixedOffset>> {
-    if date_str.is_empty() || time_str.is_empty() {
-        return None;
-    }
-    let normalized_time = if time_str.len() == 5 {
-        format!("{}:00", time_str)
-    } else {
-        time_str.to_string()
-    };
-    let dt_str = format!("{} {}", date_str.trim(), normalized_time.trim());
-    let naive = NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M:%S").ok()?;
-
-    // Approx UTC using +1h to check whether date falls in CEST (+2h) or CET (+1h)
-    let approx_utc = Utc.from_utc_datetime(&(naive - chrono::Duration::hours(1)));
-    let offset = paris_offset_for_utc(approx_utc);
-    offset.from_local_datetime(&naive).single()
-}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -216,6 +150,51 @@ fn format_diff_suffix(diff: i32) -> String {
     }
 }
 
+fn count_finished_matches_by_team(all_matches: &[FfrMatch]) -> HashMap<String, u32> {
+    let mut counts = HashMap::new();
+    for m in all_matches {
+        if m.is_finished() {
+            let (home_name, _) = get_club_display(&m.home_team);
+            let (away_name, _) = get_club_display(&m.away_team);
+            *counts.entry(home_name).or_insert(0) += 1;
+            *counts.entry(away_name).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn apply_match_to_team_row(
+    rows: &mut [LadderRow],
+    finished_count_by_team: &HashMap<String, u32>,
+    team_name: &str,
+    scored: i64,
+    conceded: i64,
+) {
+    let Some(row) = rows.iter_mut().find(|r| r.team_name == team_name) else {
+        return;
+    };
+    let played_in_table = row.wins + row.draws + row.losses;
+    let expected_played = finished_count_by_team.get(team_name).copied().unwrap_or(0);
+    if played_in_table >= expected_played {
+        return;
+    }
+
+    if scored > conceded {
+        row.wins += 1;
+        row.points += 3;
+    } else if scored == conceded {
+        row.draws += 1;
+        row.points += 2;
+    } else {
+        row.losses += 1;
+        if (conceded - scored) <= 12 {
+            row.points += 1; // Bonus défensif Super XIII (défaite <= 12 pts)
+        }
+    }
+    let new_diff = parse_diff_from_suffix(&row.suffix) + (scored - conceded) as i32;
+    row.suffix = Some(format_diff_suffix(new_diff));
+}
+
 /// Checks whether the official FFR13 HTML `table.ranking` has incorporated all finished matches
 /// from `jsonContent` (i.e. no team in `rows` has fewer played games than its finished matches).
 pub fn is_official_table_up_to_date(rows: &[LadderRow], all_matches: &[FfrMatch]) -> bool {
@@ -223,29 +202,15 @@ pub fn is_official_table_up_to_date(rows: &[LadderRow], all_matches: &[FfrMatch]
         return false;
     }
 
-    let mut finished_count_by_team: std::collections::HashMap<String, u32> =
-        std::collections::HashMap::new();
-    for m in all_matches {
-        if m.is_finished() {
-            let (home_name, _) = get_club_display(&m.home_team);
-            let (away_name, _) = get_club_display(&m.away_team);
-            *finished_count_by_team.entry(home_name).or_insert(0) += 1;
-            *finished_count_by_team.entry(away_name).or_insert(0) += 1;
-        }
-    }
-
-    for row in rows {
+    let finished_count_by_team = count_finished_matches_by_team(all_matches);
+    rows.iter().all(|row| {
         let played_in_table = row.wins + row.draws + row.losses;
         let expected_played = finished_count_by_team
             .get(&row.team_name)
             .copied()
             .unwrap_or(0);
-        if played_in_table < expected_played {
-            return false;
-        }
-    }
-
-    true
+        played_in_table >= expected_played
+    })
 }
 
 /// Updates the standings in Rust with any newly finished matches that FFR13 has not yet
@@ -255,17 +220,7 @@ pub fn apply_uncounted_matches_to_ladder(
     all_matches: &[FfrMatch],
     newly_finished: &[FfrMatch],
 ) -> String {
-    // Count total finished matches per canonical team name across the season
-    let mut finished_count_by_team: std::collections::HashMap<String, u32> =
-        std::collections::HashMap::new();
-    for m in all_matches {
-        if m.is_finished() {
-            let (home_name, _) = get_club_display(&m.home_team);
-            let (away_name, _) = get_club_display(&m.away_team);
-            *finished_count_by_team.entry(home_name).or_insert(0) += 1;
-            *finished_count_by_team.entry(away_name).or_insert(0) += 1;
-        }
-    }
+    let finished_count_by_team = count_finished_matches_by_team(all_matches);
 
     for m in newly_finished {
         let (Some(sh), Some(sa)) = (m.score_home, m.score_away) else {
@@ -273,51 +228,8 @@ pub fn apply_uncounted_matches_to_ladder(
         };
         let (home_name, _) = get_club_display(&m.home_team);
         let (away_name, _) = get_club_display(&m.away_team);
-        let diff_delta = (sh - sa) as i32;
-
-        // Update home team if FFR13 table has fewer played games than finished matches in JSON
-        if let Some(home_row) = rows.iter_mut().find(|r| r.team_name == home_name) {
-            let played_in_table = home_row.wins + home_row.draws + home_row.losses;
-            let expected_played = finished_count_by_team.get(&home_name).copied().unwrap_or(0);
-            if played_in_table < expected_played {
-                if sh > sa {
-                    home_row.wins += 1;
-                    home_row.points += 3;
-                } else if sh == sa {
-                    home_row.draws += 1;
-                    home_row.points += 2;
-                } else {
-                    home_row.losses += 1;
-                    if (sa - sh) <= 12 {
-                        home_row.points += 1; // Bonus défensif Super XIII (défaite <= 12 pts)
-                    }
-                }
-                let new_diff = parse_diff_from_suffix(&home_row.suffix) + diff_delta;
-                home_row.suffix = Some(format_diff_suffix(new_diff));
-            }
-        }
-
-        // Update away team if FFR13 table has fewer played games than finished matches in JSON
-        if let Some(away_row) = rows.iter_mut().find(|r| r.team_name == away_name) {
-            let played_in_table = away_row.wins + away_row.draws + away_row.losses;
-            let expected_played = finished_count_by_team.get(&away_name).copied().unwrap_or(0);
-            if played_in_table < expected_played {
-                if sa > sh {
-                    away_row.wins += 1;
-                    away_row.points += 3;
-                } else if sa == sh {
-                    away_row.draws += 1;
-                    away_row.points += 2;
-                } else {
-                    away_row.losses += 1;
-                    if (sh - sa) <= 12 {
-                        away_row.points += 1; // Bonus défensif Super XIII (défaite <= 12 pts)
-                    }
-                }
-                let new_diff = parse_diff_from_suffix(&away_row.suffix) - diff_delta;
-                away_row.suffix = Some(format_diff_suffix(new_diff));
-            }
-        }
+        apply_match_to_team_row(rows, &finished_count_by_team, &home_name, sh, sa);
+        apply_match_to_team_row(rows, &finished_count_by_team, &away_name, sa, sh);
     }
 
     // Sort by points DESC, then point differential DESC
@@ -688,6 +600,7 @@ mod tests {
 
     #[test]
     fn test_paris_timezone_dst_and_winter() {
+        use chrono::{TimeZone, Utc};
         // Nov 1 2026 14:00 UTC is in winter time (CET = UTC+1 -> 15:00 Paris)
         let winter_utc = Utc.with_ymd_and_hms(2026, 11, 1, 14, 0, 0).unwrap();
         assert_eq!(paris_offset_for_utc(winter_utc).local_minus_utc(), 3600);
