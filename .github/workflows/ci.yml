@@ -35,7 +35,7 @@ jobs:
           echo "PR: $HEAD -> $BASE"
 
           if [ "$BASE" = "main" ]; then
-            if ! echo "$HEAD" | grep -Eq '^(develop|release/[a-z0-9._-]+|hotfix/[a-z0-9-]+)$'; then
+            if ! echo "$HEAD" | grep -Eq '^(develop|release/[a-z0-9._-]+|hotfix/[a-z0-9-]+|release-please--branches--main.*)$'; then
               echo "❌ Gitflow violation: PRs targeting 'main' must come from 'develop', 'release/*', or 'hotfix/*'."
               echo "   Merge '$HEAD' into 'develop' first."
               exit 1
