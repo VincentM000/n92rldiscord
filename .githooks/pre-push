@@ -1,0 +1,28 @@
+#!/usr/bin/env sh
+# Git hook: pre-push
+# Empêche de pousser directement sur main (Gitflow) et vérifie fmt/clippy/tests.
+
+set -e
+
+BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+if [ "$BRANCH_NAME" = "main" ]; then
+    echo "❌ [pre-push] Push direct sur 'main' interdit (Gitflow)."
+    echo "👉 Passez par une Pull Request depuis 'develop', 'release/*' ou 'hotfix/*'."
+    exit 1
+fi
+
+if [ -n "$BRANCH_NAME" ]; then
+    BRANCH_REGEX="^(develop|(feat|fix|refactor|docs|test|chore|perf|ci|hotfix|release|wip)/[a-z0-9._-]+)$"
+    if ! echo "$BRANCH_NAME" | grep -Eq "$BRANCH_REGEX"; then
+        echo "❌ [pre-push] Push refusé : le nom de la branche '$BRANCH_NAME' ne respecte pas Gitflow."
+        echo "👉 Renommez votre branche avec : git branch -m <type>/<nom-kebab-case>"
+        exit 1
+    fi
+fi
+
+echo "🧪 [pre-push] Vérification fmt, clippy et tests unitaires..."
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --quiet
+echo "✅ [pre-push] Prêt à pousser !"

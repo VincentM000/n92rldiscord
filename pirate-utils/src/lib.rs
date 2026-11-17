@@ -1,63 +1,15 @@
+pub mod discord;
+pub mod domain;
+pub mod http;
 pub mod ladder_tracker;
+pub mod state;
+pub mod time;
 
-use dotenvy::dotenv;
-use reqwest::blocking::Client;
-use serde_json::json;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-pub fn apply_jitter(base_secs: u64) -> Duration {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let jitter = (nanos % 41) as i64 - 20;
-    let total = (base_secs as i64 + jitter).max(10) as u64;
-    Duration::from_secs(total)
-}
-
-fn resolve_state_path(filename: &str) -> PathBuf {
-    if let Ok(dir) = env::var("STATE_DIR") {
-        Path::new(&dir).join(filename)
-    } else {
-        Path::new(filename).to_path_buf()
-    }
-}
-
-pub fn load_state(filename: &str) -> String {
-    let path = resolve_state_path(filename);
-    if path.exists() {
-        fs::read_to_string(path).unwrap_or_default()
-    } else {
-        String::new()
-    }
-}
-
-pub fn save_state(filename: &str, content: &str) -> std::io::Result<()> {
-    let path = resolve_state_path(filename);
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            let _ = fs::create_dir_all(parent);
-        }
-    }
-    fs::write(path, content)
-}
-
-pub fn send_discord_alert(
-    client: &Client,
-    message: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
-    let webhook_url = env::var("DISCORD_WEBHOOK_URL")
-        .expect("DISCORD_WEBHOOK_URL environment variable is not set");
-
-    let payload = json!({
-        "username": "Captain Hook",
-        "content": message
-    });
-
-    client.post(&webhook_url).json(&payload).send()?;
-    Ok(())
-}
+pub use discord::{send_discord_alert, send_discord_webhook, send_discord_webhook_as};
+pub use domain::{
+    extract_between, extract_total_league_points, format_ladder, format_match_result, LadderRow,
+    MatchResult,
+};
+pub use http::{apply_jitter, build_http_client, DEFAULT_USER_AGENT};
+pub use state::{load_json_state, load_state, resolve_state_path, save_json_state, save_state};
+pub use time::{paris_now, paris_offset_for_utc, parse_paris_datetime};

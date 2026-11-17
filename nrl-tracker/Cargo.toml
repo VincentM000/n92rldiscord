@@ -9,5 +9,5 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
-scraper = "0.27.0" # We need this back to scrape the attribute
+scraper = { workspace = true }
 pirate-utils = { path = "../pirate-utils" }

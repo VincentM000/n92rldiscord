@@ -1,2 +1,7 @@
 .env
 target/
+*_state.txt
+*_state.json
+last_article_url.txt
+ladder_state.txt
+sl_state.txt

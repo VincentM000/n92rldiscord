@@ -1,16 +1,16 @@
-use pirate_utils::ladder_tracker::{run_tracker_loop, LadderTracker};
+use pirate_utils::ladder_tracker::{run_tracker_loop, LadderTracker, MATCH_DELIMITER};
+use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 
 const LADDER_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/betfred-super-league/table";
-// ⚓ MISE À JOUR : On pointe sur la page des calendriers !
 const RESULTS_URL: &str =
     "https://www.skysports.com/rugby-league/competitions/super-league/fixtures";
 const SL_STATE_FILE: &str = "sl_ladder_state.txt";
 const SL_MATCH_STATE_FILE: &str = "sl_match_state.txt";
 
-fn get_sl_team_emoji(team_name: &str) -> &str {
+fn get_sl_team_emoji(team_name: &str) -> &'static str {
     match team_name {
         "Wigan Warriors" => "🍒",
         "Hull K R" => "🔴",
@@ -30,6 +30,69 @@ fn get_sl_team_emoji(team_name: &str) -> &str {
         "London Broncos" => "🐎",
         _ => "🏉",
     }
+}
+
+fn parse_sl_ladder_html(html: &str) -> String {
+    let document = Html::parse_document(html);
+    let row_selector = Selector::parse("tbody tr").unwrap();
+    let team_link_selector = Selector::parse("a.sdc-site-table__link").unwrap();
+    let cell_selector = Selector::parse("td.sdc-site-table__cell").unwrap();
+
+    let mut rows = Vec::new();
+    let mut rank = 1;
+
+    for row in document.select(&row_selector) {
+        let team_name = match row.select(&team_link_selector).next() {
+            Some(link) => link
+                .value()
+                .attr("aria-label")
+                .unwrap_or("Unknown")
+                .to_string(),
+            None => continue,
+        };
+
+        let cells: Vec<String> = row
+            .select(&cell_selector)
+            .map(|cell| cell.text().collect::<String>().trim().to_string())
+            .filter(|text| !text.is_empty())
+            .collect();
+
+        if cells.len() >= 8 {
+            let wins = cells
+                .get(2)
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0);
+            let draws = cells
+                .get(3)
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0);
+            let losses = cells
+                .get(4)
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0);
+            let points = cells
+                .last()
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0);
+
+            let emoji = get_sl_team_emoji(&team_name).to_string();
+
+            rows.push(LadderRow {
+                rank,
+                team_name,
+                emoji,
+                points,
+                wins,
+                draws,
+                losses,
+                suffix: None,
+            });
+
+            rank += 1;
+        }
+    }
+
+    format_ladder("CLASSEMENT SUPER LEAGUE", &rows)
 }
 
 struct SuperLeagueTracker;
@@ -54,7 +117,6 @@ impl LadderTracker for SuperLeagueTracker {
         let response = client.get(RESULTS_URL).send()?.text()?;
         let document = Html::parse_document(&response);
 
-        // ⚓ MISE À JOUR : On cible uniquement les matchs terminés !
         let match_selector =
             Selector::parse(".fixres__item .matches__link[data-status=\"FT\"]").unwrap();
         let team1_selector = Selector::parse(".matches__participant--side1").unwrap();
@@ -63,7 +125,6 @@ impl LadderTracker for SuperLeagueTracker {
 
         let mut all_ft_matches = Vec::new();
 
-        // ⚓ MISE À JOUR : On boucle pour ramasser tous les matchs terminés
         for match_node in document.select(&match_selector) {
             let team1 = match_node
                 .select(&team1_selector)
@@ -77,83 +138,72 @@ impl LadderTracker for SuperLeagueTracker {
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
-            let scores: Vec<String> = match_node
+            let scores: Vec<i64> = match_node
                 .select(&score_selector)
-                .map(|e| e.text().collect::<String>().trim().to_string())
+                .filter_map(|e| e.text().collect::<String>().trim().parse::<i64>().ok())
                 .collect();
 
             if scores.len() >= 2 {
-                let score1 = &scores[0];
-                let score2 = &scores[1];
-
-                let emoji1 = get_sl_team_emoji(&team1);
-                let emoji2 = get_sl_team_emoji(&team2);
-
-                let message = format!(
-                    "🏁 **RÉSULTAT FINAL :**\n{} **{}** {} - {} **{}** {}",
-                    emoji1, team1, score1, score2, team2, emoji2
-                );
-                all_ft_matches.push(message);
+                let result = MatchResult {
+                    header_suffix: None,
+                    home_emoji: get_sl_team_emoji(&team1).to_string(),
+                    home_team: team1,
+                    home_score: scores[0],
+                    away_emoji: get_sl_team_emoji(&team2).to_string(),
+                    away_team: team2,
+                    away_score: scores[1],
+                    venue: None,
+                };
+                all_ft_matches.push(format_match_result(&result));
             }
         }
 
-        if !all_ft_matches.is_empty() {
-            // ⚓ MISE À JOUR : On retourne la liste attachée avec "|||"
-            return Ok(Some(all_ft_matches.join("|||")));
+        if all_ft_matches.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(all_ft_matches.join(MATCH_DELIMITER)))
         }
-
-        Ok(None)
     }
 
     fn fetch_ladder(&self, client: &Client) -> Result<String, Box<dyn std::error::Error>> {
         let response = client.get(LADDER_URL).send()?.text()?;
-        let document = Html::parse_document(&response);
-
-        let row_selector = Selector::parse("tbody tr").unwrap();
-        let team_link_selector = Selector::parse("a.sdc-site-table__link").unwrap();
-        let cell_selector = Selector::parse("td.sdc-site-table__cell").unwrap();
-
-        let mut current_ladder = String::from("🏆 **CLASSEMENT SUPER LEAGUE** 🏆\n\n");
-        let mut index = 1;
-
-        for row in document.select(&row_selector) {
-            let team_name = match row.select(&team_link_selector).next() {
-                Some(link) => link
-                    .value()
-                    .attr("aria-label")
-                    .unwrap_or("Unknown")
-                    .to_string(),
-                None => continue,
-            };
-
-            let cells: Vec<String> = row
-                .select(&cell_selector)
-                .map(|cell| cell.text().collect::<String>().trim().to_string())
-                .filter(|text| !text.is_empty())
-                .collect();
-
-            if cells.len() >= 8 {
-                let wins = cells.get(2).unwrap_or(&"0".to_string()).clone();
-                let drawn = cells.get(3).unwrap_or(&"0".to_string()).clone();
-                let lost = cells.get(4).unwrap_or(&"0".to_string()).clone();
-                let points = cells.last().unwrap_or(&"0".to_string()).clone();
-
-                let emoji_str = get_sl_team_emoji(&team_name);
-
-                current_ladder.push_str(&format!(
-                    "**{}.** {} **{}** • **{} pts** *(V:{} N:{} D:{})*\n",
-                    index, emoji_str, team_name, points, wins, drawn, lost
-                ));
-
-                index += 1;
-            }
-        }
-
-        Ok(current_ladder)
+        Ok(parse_sl_ladder_html(&response))
     }
 }
 
 fn main() {
     env_logger::init();
     run_tracker_loop(SuperLeagueTracker);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_sl_ladder_html() {
+        let html = r#"
+        <table>
+            <tbody>
+                <tr>
+                    <td class="sdc-site-table__cell">1</td>
+                    <td class="sdc-site-table__cell">
+                        <a class="sdc-site-table__link" aria-label="Catalans Dragons">Catalans Dragons</a>
+                    </td>
+                    <td class="sdc-site-table__cell">10</td>
+                    <td class="sdc-site-table__cell">0</td>
+                    <td class="sdc-site-table__cell">2</td>
+                    <td class="sdc-site-table__cell">300</td>
+                    <td class="sdc-site-table__cell">150</td>
+                    <td class="sdc-site-table__cell">150</td>
+                    <td class="sdc-site-table__cell">20</td>
+                </tr>
+            </tbody>
+        </table>
+        "#;
+
+        let formatted = parse_sl_ladder_html(html);
+        assert!(formatted.contains("🏆 **CLASSEMENT SUPER LEAGUE** 🏆"));
+        assert!(formatted.contains("**1.** 🐉 **Catalans Dragons** • **20 pts** *(V:10 N:0 D:2)*"));
+    }
 }
