@@ -1,7 +1,7 @@
 use crate::clubs::get_club_display;
 use chrono::{DateTime, Datelike, FixedOffset, Weekday};
 use log::{info, warn};
-pub use pirate_utils::{paris_now, paris_offset_for_utc, parse_paris_datetime};
+pub use pirate_utils::{paris_now, parse_paris_datetime};
 use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
 use scraper::{Html, Selector};
 use serde_json::Value;
@@ -601,6 +601,7 @@ mod tests {
     #[test]
     fn test_paris_timezone_dst_and_winter() {
         use chrono::{TimeZone, Utc};
+        use pirate_utils::paris_offset_for_utc;
         // Nov 1 2026 14:00 UTC is in winter time (CET = UTC+1 -> 15:00 Paris)
         let winter_utc = Utc.with_ymd_and_hms(2026, 11, 1, 14, 0, 0).unwrap();
         assert_eq!(paris_offset_for_utc(winter_utc).local_minus_utc(), 3600);
