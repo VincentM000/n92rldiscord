@@ -146,7 +146,11 @@ fn format_training_message(
     location: &str,
     summary: &WeatherSummary,
 ) -> String {
-    let day_label = if is_today { "d'aujourd'hui" } else { "de demain" };
+    let day_label = if is_today {
+        "d'aujourd'hui"
+    } else {
+        "de demain"
+    };
     let body = format_weather_body(
         summary,
         Audience::Children,
@@ -168,7 +172,11 @@ fn format_match_message(
     resolved_city: &str,
     summary: &WeatherSummary,
 ) -> String {
-    let day_label = if is_today { "d'aujourd'hui" } else { "de demain" };
+    let day_label = if is_today {
+        "d'aujourd'hui"
+    } else {
+        "de demain"
+    };
     let cat_part = entry
         .category_label
         .as_deref()
@@ -233,7 +241,9 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
     let target_date = if opts.today {
         today
     } else {
-        today.succ_opt().ok_or("Failed to compute tomorrow's date")?
+        today
+            .succ_opt()
+            .ok_or("Failed to compute tomorrow's date")?
     };
 
     let match_file =
@@ -277,9 +287,8 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
         let coords = if let Some(cached) = geocode_cache.get(&key) {
             Ok(cached.clone())
         } else {
-            geocode_city(&client, &entry.home_city).map(|res| {
+            geocode_city(&client, &entry.home_city).inspect(|res| {
                 geocode_cache.insert(key, res.clone());
-                res
             })
         };
 

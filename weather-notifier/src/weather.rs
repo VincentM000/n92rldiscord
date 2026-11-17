@@ -60,9 +60,7 @@ pub fn classify_rain(
         return RainLevel::Heavy;
     }
 
-    let has_moderate = weather_codes
-        .iter()
-        .any(|c| matches!(c, 61 | 63 | 66 | 80));
+    let has_moderate = weather_codes.iter().any(|c| matches!(c, 61 | 63 | 66 | 80));
     if max_hourly_precip_mm >= 1.0 || total_precip_mm >= 2.0 || has_moderate {
         return RainLevel::Moderate;
     }
@@ -242,4 +240,3 @@ mod tests {
         assert_eq!(classify_rain(9.0, 3.0, 85, &[63]), RainLevel::Heavy);
     }
 }
-

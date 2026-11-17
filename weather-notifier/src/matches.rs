@@ -62,7 +62,10 @@ pub fn parse_match_line(line: &str) -> Option<MatchEntry> {
         if parts.len() >= 3 && !parts[2].is_empty() {
             let date = parse_match_date(parts[0])?;
             let time = parse_match_time(parts[1]);
-            let category_label = parts.get(3).map(|s| (*s).to_string()).filter(|s| !s.is_empty());
+            let category_label = parts
+                .get(3)
+                .map(|s| (*s).to_string())
+                .filter(|s| !s.is_empty());
             let audience = detect_audience(category_label.as_deref());
             return Some(MatchEntry {
                 date,
@@ -202,4 +205,3 @@ mod tests {
         assert_eq!(match_window_hours(None), vec!["14", "15", "16"]);
     }
 }
-

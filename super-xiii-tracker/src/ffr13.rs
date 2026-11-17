@@ -1,8 +1,8 @@
 use crate::clubs::get_club_display;
 use chrono::{DateTime, Datelike, FixedOffset, Weekday};
 use log::{info, warn};
-pub use pirate_utils::{paris_now, parse_paris_datetime};
 use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
+pub use pirate_utils::{paris_now, parse_paris_datetime};
 use scraper::{Html, Selector};
 use serde_json::Value;
 use std::collections::HashMap;
