@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use dotenvy::dotenv;
 use log::{info, warn};
-use pirate_utils::send_discord_webhook;
+use pirate_utils::send_discord_webhook_as;
 use reqwest::blocking::Client;
 use serde_json::Value;
 use std::env;
@@ -9,6 +9,7 @@ use std::env;
 const DEFAULT_LAT: &str = "48.8924";
 const DEFAULT_LON: &str = "2.2069";
 const DEFAULT_LOCATION: &str = "Nanterre";
+const DEFAULT_BOT_NAME: &str = "Nami";
 const TRAINING_HOURS: [&str; 4] = ["18", "19", "20", "21"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,17 +285,14 @@ fn format_discord_message(
 }
 
 fn resolve_webhook_url() -> Result<String, Box<dyn std::error::Error>> {
-    if let Ok(url) = env::var("DISCORD_GENERAL_WEBHOOK_URL") {
-        if !url.trim().is_empty() {
-            return Ok(url);
+    for var_name in ["DISCORD_NAMI_WEBHOOK_URL", "DISCORD_GENERAL_WEBHOOK_URL"] {
+        if let Ok(url) = env::var(var_name) {
+            if !url.trim().is_empty() {
+                return Ok(url);
+            }
         }
     }
-    if let Ok(url) = env::var("DISCORD_WEBHOOK_URL") {
-        if !url.trim().is_empty() {
-            return Ok(url);
-        }
-    }
-    Err("Neither DISCORD_GENERAL_WEBHOOK_URL nor DISCORD_WEBHOOK_URL is set".into())
+    Err("DISCORD_NAMI_WEBHOOK_URL is not set".into())
 }
 
 fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -319,6 +317,7 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
     let lat = env::var("WEATHER_LAT").unwrap_or_else(|_| DEFAULT_LAT.to_string());
     let lon = env::var("WEATHER_LON").unwrap_or_else(|_| DEFAULT_LON.to_string());
     let location = env::var("WEATHER_LOCATION_NAME").unwrap_or_else(|_| DEFAULT_LOCATION.to_string());
+    let bot_name = env::var("WEATHER_BOT_NAME").unwrap_or_else(|_| DEFAULT_BOT_NAME.to_string());
 
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,precipitation_probability,weather_code&timezone=Europe%2FParis&forecast_days=2",
@@ -337,8 +336,8 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", message);
     } else {
         let webhook_url = resolve_webhook_url()?;
-        send_discord_webhook(&client, &webhook_url, &message)?;
-        info!("Weather forecast sent to #general for {}", target_date);
+        send_discord_webhook_as(&client, &webhook_url, &bot_name, &message)?;
+        info!("Weather forecast sent to #general as {} for {}", bot_name, target_date);
     }
 
     Ok(())
