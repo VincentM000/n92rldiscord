@@ -4,7 +4,7 @@ pub mod http;
 pub mod ladder_tracker;
 pub mod state;
 
-pub use discord::send_discord_alert;
+pub use discord::{send_discord_alert, send_discord_webhook};
 pub use domain::{
     extract_between, extract_total_league_points, format_ladder, format_match_result, LadderRow,
     MatchResult,

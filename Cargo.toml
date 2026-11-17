@@ -6,7 +6,8 @@ members = [
     "nrl-tracker",
     "super-league-tracker",
     "super-xiii-tracker",
-    "pirate-utils"
+    "pirate-utils",
+    "weather-notifier"
 ]
 
 # This ensures all your crates use the same dependency versions

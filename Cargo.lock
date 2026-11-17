@@ -1833,6 +1833,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "weather-notifier"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dotenvy",
+ "env_logger",
+ "log",
+ "pirate-utils",
+ "reqwest",
+ "serde_json",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
