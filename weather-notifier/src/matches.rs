@@ -202,3 +202,4 @@ mod tests {
         assert_eq!(match_window_hours(None), vec!["14", "15", "16"]);
     }
 }
+

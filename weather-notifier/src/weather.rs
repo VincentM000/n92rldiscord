@@ -242,3 +242,4 @@ mod tests {
         assert_eq!(classify_rain(9.0, 3.0, 85, &[63]), RainLevel::Heavy);
     }
 }
+

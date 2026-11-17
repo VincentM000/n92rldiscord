@@ -1842,6 +1842,7 @@ dependencies = [
  "log",
  "pirate-utils",
  "reqwest",
+ "serde",
  "serde_json",
 ]
 
