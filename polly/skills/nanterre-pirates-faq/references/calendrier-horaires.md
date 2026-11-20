@@ -7,6 +7,7 @@
 | Date | Événement | Catégories | Lieu / Précisions |
 | :--- | :--- | :--- | :--- |
 | **Samedi 21/11/2026** | Déplacement / plateau | **U9, U11** | **Freneuse (78)** |
+| **Samedi 21/11/2026** | Tournoi de Touch (J1) | **Touch** | **Colombes — Stade départemental Yves-du-Manoir** (RDV joueurs **8h00**, ouverture complexe/vestiaires 8h00, matchs **9h00 – 17h05** : 5 + 3 matchs de poule de 15 min sans mi-temps, 5 min entre 2 matchs) |
 | **Dimanche 22/11/2026** | Match Seniors | **Seniors** | **Nanterre** *(Nanterre vs Grigny à 15h)* |
 | **Samedi 28/11/2026** | Entraînement comité | **U11 à U15** | **Paris ou Nanterre** *(lieu précis à confirmer)* |
 | **Dimanche 29/11/2026** | Match Seniors | **Seniors** | **Grigny** *(Grigny vs Nanterre à 15h)* |
