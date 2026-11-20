@@ -19,6 +19,9 @@ on:
       - main
       - develop
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -29,9 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate Gitflow source -> target branch
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
         run: |
-          BASE="${{ github.base_ref }}"
-          HEAD="${{ github.head_ref }}"
           echo "PR: $HEAD -> $BASE"
 
           if [ "$BASE" = "main" ]; then
