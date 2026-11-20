@@ -5,7 +5,7 @@ use chrono::{Datelike, NaiveDate, Timelike, Weekday};
 use dotenvy::dotenv;
 use log::{info, warn};
 use matches::{load_matches_for_date, match_window_hours, Audience, MatchEntry};
-use pirate_utils::{build_http_client, paris_now, send_discord_webhook_as};
+use pirate_utils::{build_http_client, load_state, paris_now, save_state, send_discord_webhook_as};
 use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::env;
@@ -17,6 +17,7 @@ const DEFAULT_LON: &str = "2.2069";
 const DEFAULT_LOCATION: &str = "Nanterre";
 const DEFAULT_BOT_NAME: &str = "Nami";
 const DEFAULT_MATCH_FILE: &str = "matches.txt";
+const STATE_FILE: &str = "weather_last_sent.txt";
 const TRAINING_HOURS: [&str; 4] = ["18", "19", "20", "21"];
 
 #[derive(Debug, Clone, Copy)]
@@ -245,6 +246,15 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
             .succ_opt()
             .ok_or("Failed to compute tomorrow's date")?
     };
+    let target_date_key = target_date.format("%Y-%m-%d").to_string();
+
+    if !opts.dry_run && !opts.force && load_state(STATE_FILE) == target_date_key {
+        info!(
+            "Weather already sent for {}, skipping duplicate.",
+            target_date_key
+        );
+        return Ok(());
+    }
 
     let match_file =
         env::var("MATCH_SCHEDULE_FILE").unwrap_or_else(|_| DEFAULT_MATCH_FILE.to_string());
@@ -267,12 +277,15 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     let client = build_http_client();
 
+    let mut sent_any = false;
+
     if run_training {
         let hours = TRAINING_HOURS.map(str::to_string);
         let summary =
             fetch_forecast_window(&client, &default_lat, &default_lon, target_date, &hours)?;
         let message = format_training_message(target_date, opts.today, &default_location, &summary);
         dispatch_message(&client, opts, &bot_name, &message)?;
+        sent_any = true;
         info!("Training weather sent as {} for {}", bot_name, target_date);
     }
 
@@ -300,6 +313,7 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
                         let message =
                             format_match_message(&entry, opts.today, &resolved_city, &summary);
                         dispatch_message(&client, opts, &bot_name, &message)?;
+                        sent_any = true;
                         info!(
                             "Match weather sent as {} for {} in {}",
                             bot_name, entry.date, resolved_city
@@ -313,6 +327,10 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => warn!("Failed to geocode match city '{}': {}", entry.home_city, e),
         }
+    }
+
+    if sent_any && !opts.dry_run {
+        save_state(STATE_FILE, &target_date_key)?;
     }
 
     Ok(())

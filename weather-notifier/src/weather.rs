@@ -53,22 +53,27 @@ pub fn classify_rain(
     max_precip_prob: u64,
     weather_codes: &[i64],
 ) -> RainLevel {
-    let has_heavy = weather_codes
-        .iter()
-        .any(|c| matches!(c, 65 | 67 | 81 | 82 | 95 | 96 | 99));
+    let has_measurable_rain = total_precip_mm >= 0.2;
+
+    let has_heavy = has_measurable_rain
+        && weather_codes
+            .iter()
+            .any(|c| matches!(c, 65 | 67 | 81 | 82 | 95 | 96 | 99));
     if max_hourly_precip_mm >= 4.0 || total_precip_mm >= 8.0 || has_heavy {
         return RainLevel::Heavy;
     }
 
-    let has_moderate = weather_codes.iter().any(|c| matches!(c, 61 | 63 | 66 | 80));
+    let has_moderate =
+        has_measurable_rain && weather_codes.iter().any(|c| matches!(c, 61 | 63 | 66 | 80));
     if max_hourly_precip_mm >= 1.0 || total_precip_mm >= 2.0 || has_moderate {
         return RainLevel::Moderate;
     }
 
-    let has_drizzle = weather_codes
-        .iter()
-        .any(|c| matches!(c, 51 | 53 | 55 | 56 | 57));
-    if total_precip_mm >= 0.2 || max_precip_prob >= 30 || has_drizzle {
+    let has_drizzle = has_measurable_rain
+        && weather_codes
+            .iter()
+            .any(|c| matches!(c, 51 | 53 | 55 | 56 | 57));
+    if has_measurable_rain || max_precip_prob >= 30 || has_drizzle {
         return RainLevel::Light;
     }
 
@@ -235,6 +240,7 @@ mod tests {
     #[test]
     fn classifies_dry_moderate_and_light_rain() {
         assert_eq!(classify_rain(0.0, 0.0, 10, &[1, 2, 3]), RainLevel::Dry);
+        assert_eq!(classify_rain(0.0, 0.0, 18, &[80]), RainLevel::Dry);
         assert_eq!(classify_rain(0.5, 0.3, 40, &[51]), RainLevel::Light);
         assert_eq!(classify_rain(3.2, 1.4, 75, &[61]), RainLevel::Moderate);
         assert_eq!(classify_rain(9.0, 3.0, 85, &[63]), RainLevel::Heavy);
