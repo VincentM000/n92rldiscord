@@ -11,7 +11,7 @@
 | **Dimanche 22/11/2026** | Match Seniors | **Seniors** | **Nanterre** *(Nanterre vs Grigny à 15h)* |
 | **Samedi 28/11/2026** | Entraînement comité | **U11 à U15** | **Paris ou Nanterre** *(lieu précis à confirmer)* |
 | **Dimanche 29/11/2026** | Match Seniors | **Seniors** | **Grigny** *(Grigny vs Nanterre à 15h)* |
-| **Samedi 12/12/2026** | Tournoi de Noël jeunes | **Jeunes (EDR)** | **Paris** |
+| **Samedi 12/12/2026** | Tournoi de Noël jeunes | **Jeunes / EDR (Baby à U15)** | **Paris** |
 | **Dimanche 13/12/2026** | Match Seniors | **Seniors** | **Nanterre** |
 | **Samedi 19/12/2026** | Déplacement comité à Nantes | **U11 / U13 / U15 (féminines)** | **Nantes** — en bus, **départ depuis Châtillon** |
 
