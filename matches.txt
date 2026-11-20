@@ -3,7 +3,7 @@
 # La première ville (Ville1) détermine le lieu et les coordonnées GPS du match.
 # Catégorie : Seniors / Adultes ou Enfants (ex: Enfants, U13, Seniors...)
 21/11/2026 Freneuse - U9 / U11
-21/11/2026 Colombes 09:00 - Tournoi de Touch J1
+22/11/2026 Colombes 09:00 - Tournoi de Touch J1
 22/11/2026 Nanterre/Grigny 15H - Seniors
 28/11/2026 Paris - Entraînement comité U11 à U15
 29/11/2026 Grigny/Nanterre 15H - Seniors
