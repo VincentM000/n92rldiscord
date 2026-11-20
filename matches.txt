@@ -2,6 +2,10 @@
 # Format : DD/MM/YYYY Ville1/Ville2 [HEURE] - Catégorie
 # La première ville (Ville1) détermine le lieu et les coordonnées GPS du match.
 # Catégorie : Seniors / Adultes ou Enfants (ex: Enfants, U13, Seniors...)
+21/11/2026 Freneuse - U9 / U11
 22/11/2026 Nanterre/Grigny 15H - Seniors
+28/11/2026 Paris - Entraînement comité U11 à U15
 29/11/2026 Grigny/Nanterre 15H - Seniors
-13/11/2026 Nanterre/Châtillon 15H - Seniors
+12/12/2026 Paris - Tournoi de Noël Jeunes
+13/12/2026 Nanterre 15H - Seniors
+19/12/2026 Nantes - Comité U11/U13/U15 Féminines
