@@ -1,0 +1,46 @@
+# Configuration pour l'outil `pre-commit` (https://pre-commit.com)
+# Note : Vous pouvez également utiliser directement les hooks natifs Git sans dépendance externe :
+#   git config core.hooksPath .githooks
+
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: branch-name-check
+        name: Vérification du nom de la branche
+        entry: sh .githooks/pre-commit
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: cargo-fmt
+        name: Formatage Rust (cargo fmt)
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: cargo-clippy
+        name: Linter & Clean Code (cargo clippy)
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: cargo-test
+        name: Tests unitaires (cargo test)
+        entry: cargo test --workspace
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+
+      - id: conventional-commit-msg
+        name: Convention de nommage des commits
+        entry: sh .githooks/commit-msg
+        language: system
+        stages: [commit-msg]
+

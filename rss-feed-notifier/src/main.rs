@@ -1,6 +1,6 @@
 use chrono::Timelike;
 use log::{info, warn};
-use pirate_utils::{apply_jitter, load_state, save_state, send_discord_alert};
+use pirate_utils::{apply_jitter, build_http_client, load_state, save_state, send_discord_alert};
 use reqwest::blocking::Client;
 use rss::Channel;
 use std::thread;
@@ -8,19 +8,22 @@ use std::thread;
 const FEED_URL: &str = "https://treizemondial.fr/feed/";
 const STATE_FILE: &str = "last_article_url.txt";
 
+fn base_sleep_secs_for_hour(hour: u32) -> u64 {
+    if (6..22).contains(&hour) {
+        300
+    } else {
+        1800
+    }
+}
+
 fn get_sleep_duration() -> std::time::Duration {
     let hour = chrono::Utc::now().hour();
-    let base_secs = if (6..22).contains(&hour) { 300 } else { 1800 };
-    apply_jitter(base_secs)
+    apply_jitter(base_sleep_secs_for_hour(hour))
 }
 
 fn main() {
     env_logger::init();
-
-    let client = Client::builder()
-        .user_agent("NanterrePirates-RSS/1.0")
-        .build()
-        .expect("Failed to build HTTP client");
+    let client = build_http_client();
 
     info!("RSS Feed Notifier started.");
 
@@ -66,4 +69,15 @@ fn check_rss_feed(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_base_sleep_secs_for_hour() {
+        assert_eq!(base_sleep_secs_for_hour(12), 300);
+        assert_eq!(base_sleep_secs_for_hour(3), 1800);
+    }
 }

@@ -8,5 +8,5 @@ reqwest = { workspace = true }
 chrono = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
-scraper = "0.27.0"
+scraper = { workspace = true }
 pirate-utils = { path = "../pirate-utils" }

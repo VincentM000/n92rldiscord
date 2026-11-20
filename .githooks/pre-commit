@@ -1,0 +1,47 @@
+#!/usr/bin/env sh
+# Git hook: pre-commit
+# Vérifie :
+# 1. La convention de nommage de la branche courante
+# 2. Le formatage du code Rust (cargo fmt)
+# 3. L'analyse statique / Clean Code (cargo clippy)
+# 4. La réussite de tous les tests unitaires (cargo test)
+
+set -e
+
+echo "🔍 [pre-commit] Vérification de la convention de nommage de la branche..."
+BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+if [ -n "$BRANCH_NAME" ]; then
+    BRANCH_REGEX="^(main|develop|(feat|fix|refactor|docs|test|chore|perf|ci|hotfix|wip)/[a-z0-9]+(-[a-z0-9]+)*)$"
+    if ! echo "$BRANCH_NAME" | grep -Eq "$BRANCH_REGEX"; then
+        echo "❌ [pre-commit] Nom de branche invalide : '$BRANCH_NAME'"
+        echo "👉 Format attendu : 'main', 'develop' ou '<type>/<description-en-kebab-case>'"
+        echo "   Types autorisés : feat, fix, refactor, docs, test, chore, perf, ci, hotfix, wip"
+        echo "   Exemple valide  : feat/super-xiii-tracker, refactor/clean-architecture, fix/ffr13-parser"
+        exit 1
+    fi
+fi
+
+echo "🎨 [pre-commit] Vérification du formatage (cargo fmt)..."
+if ! cargo fmt --all -- --check; then
+    echo "❌ [pre-commit] Le code n'est pas correctement formaté."
+    echo "👉 Exécutez 'cargo fmt --all' avant de commiter."
+    exit 1
+fi
+
+echo "🧹 [pre-commit] Vérification Clean Code & Linter (cargo clippy)..."
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
+    echo "❌ [pre-commit] Des avertissements ou erreurs Clippy ont été détectés."
+    echo "👉 Corrigez les problèmes signalés ci-dessus avant de commiter."
+    exit 1
+fi
+
+echo "🧪 [pre-commit] Exécution des tests unitaires (cargo test)..."
+if ! cargo test --workspace --quiet; then
+    echo "❌ [pre-commit] Des tests unitaires ont échoué."
+    echo "👉 Corrigez les tests en échec avant de commiter."
+    exit 1
+fi
+
+echo "✅ [pre-commit] Toutes les vérifications sont passées avec succès !"
+

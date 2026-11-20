@@ -1,0 +1,73 @@
+name: CI (Gitflow & Rust)
+
+on:
+  push:
+    branches:
+      - develop
+      - "feat/**"
+      - "fix/**"
+      - "refactor/**"
+      - "docs/**"
+      - "test/**"
+      - "chore/**"
+      - "perf/**"
+      - "ci/**"
+      - "release/**"
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gitflow-guard:
+    name: Gitflow Branch Rules
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Gitflow source -> target branch
+        run: |
+          BASE="${{ github.base_ref }}"
+          HEAD="${{ github.head_ref }}"
+          echo "PR: $HEAD -> $BASE"
+
+          if [ "$BASE" = "main" ]; then
+            if ! echo "$HEAD" | grep -Eq '^(develop|release/[a-z0-9._-]+|hotfix/[a-z0-9-]+|release-please--branches--main.*)$'; then
+              echo "❌ Gitflow violation: PRs targeting 'main' must come from 'develop', 'release/*', or 'hotfix/*'."
+              echo "   Merge '$HEAD' into 'develop' first."
+              exit 1
+            fi
+          elif [ "$BASE" = "develop" ]; then
+            if ! echo "$HEAD" | grep -Eq '^(feat|fix|refactor|docs|test|chore|perf|ci|hotfix)/[a-z0-9-]+$'; then
+              echo "❌ Gitflow violation: PRs targeting 'develop' must come from a valid '<type>/<kebab-case>' branch."
+              exit 1
+            fi
+          fi
+          echo "✅ Gitflow check passed."
+
+  rust-ci:
+    name: Format, Clippy & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+

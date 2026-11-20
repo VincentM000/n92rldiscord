@@ -1,9 +1,10 @@
 use chrono::Datelike;
-use pirate_utils::ladder_tracker::{run_tracker_loop, LadderTracker};
+use pirate_utils::ladder_tracker::{run_tracker_loop, LadderTracker, MATCH_DELIMITER};
+use pirate_utils::{format_ladder, format_match_result, LadderRow, MatchResult};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH}; // 🏴‍☠️ Imported for Cache-Busting
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const NRL_STATE_FILE: &str = "nrl_ladder_state.txt";
 const NRL_MATCH_STATE_FILE: &str = "nrl_match_state.txt";
@@ -12,7 +13,7 @@ fn get_current_season() -> i32 {
     chrono::Utc::now().year()
 }
 
-fn get_team_emoji(theme_key: &str) -> &str {
+fn get_team_emoji(theme_key: &str) -> &'static str {
     match theme_key {
         "panthers" => "<:panthers:1531243678763323512>",
         "roosters" => "<:roosters:1531242666422046901>",
@@ -53,6 +54,51 @@ fn find_all_fixtures(value: &Value, fixtures: &mut Vec<Value>) {
     }
 }
 
+fn parse_nrl_ladder_json(json_str: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let json_data: Value = serde_json::from_str(json_str)?;
+    let positions = json_data["positions"]
+        .as_array()
+        .ok_or("Could not find positions array in JSON")?;
+
+    let mut rows = Vec::with_capacity(positions.len());
+
+    for (index, team_data) in positions.iter().enumerate() {
+        let team_name = team_data["teamNickname"]
+            .as_str()
+            .unwrap_or("Unknown")
+            .to_string();
+        let theme_key = team_data["theme"]["key"].as_str().unwrap_or("unknown");
+        let emoji = get_team_emoji(theme_key).to_string();
+
+        let points = team_data["stats"]["points"].as_i64().unwrap_or(0) as i32;
+        let wins = team_data["stats"]["wins"].as_u64().unwrap_or(0) as u32;
+        let draws = team_data["stats"]["drawn"].as_u64().unwrap_or(0) as u32;
+        let losses = team_data["stats"]["lost"].as_u64().unwrap_or(0) as u32;
+
+        let next_opponent = if team_data["next"]["isBye"].as_bool().unwrap_or(false) {
+            "Repos".to_string()
+        } else {
+            team_data["next"]["nickname"]
+                .as_str()
+                .unwrap_or("Unknown")
+                .to_string()
+        };
+
+        rows.push(LadderRow {
+            rank: index + 1,
+            team_name,
+            emoji,
+            points,
+            wins,
+            draws,
+            losses,
+            suffix: Some(format!("🔜 {}", next_opponent)),
+        });
+    }
+
+    Ok(format_ladder("CLASSEMENT NRL", &rows))
+}
+
 struct NrlTracker;
 
 impl LadderTracker for NrlTracker {
@@ -78,11 +124,10 @@ impl LadderTracker for NrlTracker {
             .as_millis();
 
         let season = get_current_season();
-        let draw_url = format!(
-            "https://www.nrl.com/draw/?competition=111&season={}",
-            season
+        let stealth_url = format!(
+            "https://www.nrl.com/draw/?competition=111&season={}&_t={}",
+            season, timestamp
         );
-        let stealth_url = format!("{}&_t={}", draw_url, timestamp);
 
         let html_content = client.get(&stealth_url).send()?.text()?;
         let document = Html::parse_document(&html_content);
@@ -98,37 +143,48 @@ impl LadderTracker for NrlTracker {
             }
         }
 
-        let mut last_fulltime_message = None;
+        let mut completed_messages = Vec::new();
 
         for fixture in all_fixtures {
             if fixture["matchState"].as_str() == Some("FullTime") {
                 let home_team = fixture["homeTeam"]["nickName"]
                     .as_str()
-                    .unwrap_or("Unknown");
-                let home_score = fixture["homeTeam"]["score"].as_u64().unwrap_or(0);
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let home_score = fixture["homeTeam"]["score"].as_i64().unwrap_or(0);
                 let home_theme = fixture["homeTeam"]["theme"]["key"]
                     .as_str()
                     .unwrap_or("unknown");
 
                 let away_team = fixture["awayTeam"]["nickName"]
                     .as_str()
-                    .unwrap_or("Unknown");
-                let away_score = fixture["awayTeam"]["score"].as_u64().unwrap_or(0);
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let away_score = fixture["awayTeam"]["score"].as_i64().unwrap_or(0);
                 let away_theme = fixture["awayTeam"]["theme"]["key"]
                     .as_str()
                     .unwrap_or("unknown");
 
-                let emoji_home = get_team_emoji(home_theme);
-                let emoji_away = get_team_emoji(away_theme);
+                let result = MatchResult {
+                    header_suffix: None,
+                    home_team,
+                    home_emoji: get_team_emoji(home_theme).to_string(),
+                    home_score,
+                    away_team,
+                    away_emoji: get_team_emoji(away_theme).to_string(),
+                    away_score,
+                    venue: None,
+                };
 
-                last_fulltime_message = Some(format!(
-                    "🏁 **RÉSULTAT FINAL :**\n{} **{}** {} - {} **{}** {}",
-                    emoji_home, home_team, home_score, away_score, away_team, emoji_away
-                ));
+                completed_messages.push(format_match_result(&result));
             }
         }
 
-        Ok(last_fulltime_message)
+        if completed_messages.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(completed_messages.join(MATCH_DELIMITER)))
+        }
     }
 
     fn fetch_ladder(&self, client: &Client) -> Result<String, Box<dyn std::error::Error>> {
@@ -151,52 +207,53 @@ impl LadderTracker for NrlTracker {
             .attr("q-data")
             .ok_or("Could not find q-data attribute")?;
 
-        let json_data: Value = serde_json::from_str(json_str)?;
-
-        let positions = json_data["positions"]
-            .as_array()
-            .ok_or("Could not find positions array in JSON")?;
-
-        let mut current_ladder = String::from("🏆 **CLASSEMENT NRL** 🏆\n\n");
-
-        for (index, team_data) in positions.iter().enumerate() {
-            let team_name = team_data["teamNickname"].as_str().unwrap_or("Unknown");
-
-            let theme_key = team_data["theme"]["key"].as_str().unwrap_or("unknown");
-            let emoji_str = get_team_emoji(theme_key);
-
-            let points = team_data["stats"]["points"].as_u64().unwrap_or(0);
-            let wins = team_data["stats"]["wins"].as_u64().unwrap_or(0);
-            let drawn = team_data["stats"]["drawn"].as_u64().unwrap_or(0);
-            let lost = team_data["stats"]["lost"].as_u64().unwrap_or(0);
-
-            let next_opponent = if team_data["next"]["isBye"].as_bool().unwrap_or(false) {
-                "Repos".to_string()
-            } else {
-                team_data["next"]["nickname"]
-                    .as_str()
-                    .unwrap_or("Unknown")
-                    .to_string()
-            };
-
-            current_ladder.push_str(&format!(
-                "**{}.** {} **{}** • **{} pts** *(V:{} N:{} D:{})* 🔜 {}\n",
-                index + 1,
-                emoji_str,
-                team_name,
-                points,
-                wins,
-                drawn,
-                lost,
-                next_opponent
-            ));
-        }
-
-        Ok(current_ladder)
+        parse_nrl_ladder_json(json_str)
     }
 }
 
 fn main() {
     env_logger::init();
     run_tracker_loop(NrlTracker);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_nrl_ladder_json() {
+        let sample_json = r#"{
+            "positions": [
+                {
+                    "teamNickname": "Storm",
+                    "theme": { "key": "storm" },
+                    "stats": { "points": 12, "wins": 6, "drawn": 0, "lost": 1 },
+                    "next": { "isBye": false, "nickname": "Panthers" }
+                }
+            ]
+        }"#;
+
+        let formatted = parse_nrl_ladder_json(sample_json).expect("Should parse NRL ladder JSON");
+        assert!(formatted.contains("🏆 **CLASSEMENT NRL** 🏆"));
+        assert!(formatted.contains("**Storm** • **12 pts** *(V:6 N:0 D:1)* 🔜 Panthers"));
+    }
+
+    #[test]
+    fn test_find_all_fixtures() {
+        let nested = serde_json::json!({
+            "round": {
+                "matches": [
+                    {
+                        "matchState": "FullTime",
+                        "homeTeam": { "nickName": "Roosters", "score": 20 },
+                        "awayTeam": { "nickName": "Rabbitohs", "score": 14 }
+                    }
+                ]
+            }
+        });
+
+        let mut found = Vec::new();
+        find_all_fixtures(&nested, &mut found);
+        assert_eq!(found.len(), 1);
+    }
 }
