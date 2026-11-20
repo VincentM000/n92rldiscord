@@ -12,10 +12,10 @@ echo "🔍 [pre-commit] Vérification de la convention de nommage de la branche.
 BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
 if [ -n "$BRANCH_NAME" ]; then
-    BRANCH_REGEX="^(main|(feat|fix|refactor|docs|test|chore|perf|ci|hotfix|wip)/[a-z0-9]+(-[a-z0-9]+)*)$"
+    BRANCH_REGEX="^(main|develop|(feat|fix|refactor|docs|test|chore|perf|ci|hotfix|wip)/[a-z0-9]+(-[a-z0-9]+)*)$"
     if ! echo "$BRANCH_NAME" | grep -Eq "$BRANCH_REGEX"; then
         echo "❌ [pre-commit] Nom de branche invalide : '$BRANCH_NAME'"
-        echo "👉 Format attendu : 'main' ou '<type>/<description-en-kebab-case>'"
+        echo "👉 Format attendu : 'main', 'develop' ou '<type>/<description-en-kebab-case>'"
         echo "   Types autorisés : feat, fix, refactor, docs, test, chore, perf, ci, hotfix, wip"
         echo "   Exemple valide  : feat/super-xiii-tracker, refactor/clean-architecture, fix/ffr13-parser"
         exit 1

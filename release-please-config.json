@@ -12,7 +12,7 @@
         { "type": "fix", "section": "Corrections (Bug Fixes)" },
         { "type": "perf", "section": "Performance" },
         { "type": "refactor", "section": "Refactorisation" },
-        { "type": "docs", "section": "Documentation", "hidden": true },
+        { "type": "docs", "section": "Documentation" },
         { "type": "ci", "section": "CI / CD", "hidden": true },
         { "type": "chore", "section": "Maintenance", "hidden": true },
         { "type": "style", "section": "Style", "hidden": true }
