@@ -1,6 +1,13 @@
 use chrono::NaiveDate;
+use log::warn;
 use reqwest::blocking::Client;
+use reqwest::StatusCode;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use std::thread;
+use std::time::Duration;
+
+const RETRY_DELAYS_SECS: [u64; 3] = [5, 15, 30];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RainLevel {
@@ -159,6 +166,65 @@ fn url_encode(input: &str) -> String {
     out
 }
 
+fn is_retryable_status(status: StatusCode) -> bool {
+    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn is_retryable_reqwest_error(err: &reqwest::Error) -> bool {
+    if err.is_timeout() || err.is_connect() || err.is_request() {
+        return true;
+    }
+    err.status().is_some_and(is_retryable_status)
+}
+
+fn retry_with_delays<T, E, F, P>(
+    delays: &[Duration],
+    mut operation: F,
+    should_retry: P,
+) -> Result<T, E>
+where
+    E: std::fmt::Display,
+    F: FnMut() -> Result<T, E>,
+    P: Fn(&E) -> bool,
+{
+    let total_attempts = delays.len() + 1;
+    for (idx, delay) in delays.iter().enumerate() {
+        match operation() {
+            Ok(val) => return Ok(val),
+            Err(err) if should_retry(&err) => {
+                warn!(
+                    "Transient Open-Meteo error (attempt {}/{}): {}. Retrying in {}s...",
+                    idx + 1,
+                    total_attempts,
+                    err,
+                    delay.as_secs()
+                );
+                if !delay.is_zero() {
+                    thread::sleep(*delay);
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    operation()
+}
+
+fn get_json_with_retry<T: DeserializeOwned>(
+    client: &Client,
+    url: &str,
+) -> Result<T, Box<dyn std::error::Error>> {
+    let delays: Vec<Duration> = RETRY_DELAYS_SECS
+        .iter()
+        .map(|&s| Duration::from_secs(s))
+        .collect();
+    let result = retry_with_delays(
+        &delays,
+        || client.get(url).send()?.error_for_status()?.json::<T>(),
+        is_retryable_reqwest_error,
+    )?;
+    Ok(result)
+}
+
 pub fn geocode_city(
     client: &Client,
     city: &str,
@@ -167,7 +233,7 @@ pub fn geocode_city(
         "https://geocoding-api.open-meteo.com/v1/search?name={}&count=5&language=fr&format=json",
         url_encode(city)
     );
-    let resp: GeocodingResponse = client.get(&url).send()?.error_for_status()?.json()?;
+    let resp: GeocodingResponse = get_json_with_retry(client, &url)?;
     let results = resp
         .results
         .filter(|r| !r.is_empty())
@@ -196,7 +262,7 @@ pub fn fetch_forecast_window(
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m,precipitation,precipitation_probability,weather_code&timezone=Europe%2FParis&forecast_days=2",
         lat, lon
     );
-    let forecast: ForecastResponse = client.get(&url).send()?.error_for_status()?.json()?;
+    let forecast: ForecastResponse = get_json_with_retry(client, &url)?;
     summarize_forecast_window(&forecast, target_date, hours)
 }
 
@@ -244,5 +310,42 @@ mod tests {
         assert_eq!(classify_rain(0.5, 0.3, 40, &[51]), RainLevel::Light);
         assert_eq!(classify_rain(3.2, 1.4, 75, &[61]), RainLevel::Moderate);
         assert_eq!(classify_rain(9.0, 3.0, 85, &[63]), RainLevel::Heavy);
+    }
+
+    #[test]
+    fn retries_transient_errors_and_stops_on_fatal() {
+        let zero_delays = [Duration::ZERO, Duration::ZERO, Duration::ZERO];
+
+        let mut attempts = 0;
+        let ok_res = retry_with_delays(
+            &zero_delays,
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err("503 Service Unavailable")
+                } else {
+                    Ok("forecast")
+                }
+            },
+            |e| e.contains("503"),
+        );
+        assert_eq!(ok_res, Ok("forecast"));
+        assert_eq!(attempts, 3);
+
+        let mut fatal_attempts = 0;
+        let err_res: Result<(), &str> = retry_with_delays(
+            &zero_delays,
+            || {
+                fatal_attempts += 1;
+                Err("400 Bad Request")
+            },
+            |e| e.contains("503"),
+        );
+        assert_eq!(err_res, Err("400 Bad Request"));
+        assert_eq!(fatal_attempts, 1);
+
+        assert!(is_retryable_status(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
     }
 }
