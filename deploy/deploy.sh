@@ -53,7 +53,10 @@ else
     echo "ℹ️  Utilisateur '${HERMES_USER}' ou /home/${HERMES_USER}/.hermes introuvable, étape Polly ignorée."
 fi
 
-echo "🚀 [4/4] Redémarrage des services systemd Rust..."
+echo "🚀 [4/4] Synchronisation des unités systemd et redémarrage des services Rust..."
+sudo cp "$REPO_DIR"/deploy/systemd/*.service "$REPO_DIR"/deploy/systemd/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+
 sudo systemctl restart \
     nrl-tracker \
     super-league-tracker \
@@ -62,6 +65,7 @@ sudo systemctl restart \
     rss-feed-notifier
 
 sudo systemctl enable --now weather-notifier.timer
+sudo systemctl restart weather-notifier.timer
 
 echo "✅ Déploiement terminé !"
 sudo systemctl status \

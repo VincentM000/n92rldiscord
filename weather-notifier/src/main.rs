@@ -336,12 +336,39 @@ fn run(opts: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn format_failure_alert(error_msg: &str) -> String {
+    format!(
+        "⚠️ **Échec de Nami (`weather-notifier`)**\nImpossible d'envoyer la météo après plusieurs tentatives :\n```\n{}\n```",
+        error_msg
+    )
+}
+
+fn notify_admin_on_failure(error_msg: &str) {
+    dotenv().ok();
+    let Ok(url) = env::var("DISCORD_ADMIN_WEBHOOK_URL") else {
+        return;
+    };
+    if url.trim().is_empty() {
+        return;
+    }
+
+    let client = build_http_client();
+    let message = format_failure_alert(error_msg);
+    if let Err(alert_err) = send_discord_webhook_as(&client, &url, "Nami (Alerte)", &message) {
+        warn!("Failed to send admin failure alert: {}", alert_err);
+    }
+}
+
 fn main() {
     env_logger::init();
     let opts = CliOptions::from_args(env::args().skip(1));
 
     if let Err(e) = run(opts) {
-        warn!("Weather notifier failed: {}", e);
+        let err_str = e.to_string();
+        warn!("Weather notifier failed: {}", err_str);
+        if !opts.dry_run {
+            notify_admin_on_failure(&err_str);
+        }
         std::process::exit(1);
     }
 }
@@ -401,5 +428,12 @@ mod tests {
         assert!(msg.contains("Dimanche 29 novembre (Grigny vs Nanterre, à 15h00)"));
         assert!(msg.contains("📍 *Grigny*"));
         assert!(msg.contains("Préparez vos affaires"));
+    }
+
+    #[test]
+    fn formats_failure_alert_message() {
+        let msg = format_failure_alert("503 Service Unavailable");
+        assert!(msg.contains("Échec de Nami"));
+        assert!(msg.contains("503 Service Unavailable"));
     }
 }

@@ -62,25 +62,25 @@ pub fn classify_rain(
 ) -> RainLevel {
     let has_measurable_rain = total_precip_mm >= 0.2;
 
-    let has_heavy = has_measurable_rain
+    let has_heavy_code = (total_precip_mm >= 2.0 || max_hourly_precip_mm >= 1.0)
         && weather_codes
             .iter()
             .any(|c| matches!(c, 65 | 67 | 81 | 82 | 95 | 96 | 99));
-    if max_hourly_precip_mm >= 4.0 || total_precip_mm >= 8.0 || has_heavy {
+    if max_hourly_precip_mm >= 4.0 || total_precip_mm >= 8.0 || has_heavy_code {
         return RainLevel::Heavy;
     }
 
-    let has_moderate =
-        has_measurable_rain && weather_codes.iter().any(|c| matches!(c, 61 | 63 | 66 | 80));
-    if max_hourly_precip_mm >= 1.0 || total_precip_mm >= 2.0 || has_moderate {
+    let has_moderate_code = (total_precip_mm >= 1.0 || max_hourly_precip_mm >= 0.5)
+        && weather_codes.iter().any(|c| matches!(c, 63 | 66));
+    if max_hourly_precip_mm >= 1.0 || total_precip_mm >= 2.0 || has_moderate_code {
         return RainLevel::Moderate;
     }
 
-    let has_drizzle = has_measurable_rain
+    let has_light_code = has_measurable_rain
         && weather_codes
             .iter()
-            .any(|c| matches!(c, 51 | 53 | 55 | 56 | 57));
-    if has_measurable_rain || max_precip_prob >= 30 || has_drizzle {
+            .any(|c| matches!(c, 51 | 53 | 55 | 56 | 57 | 61 | 80));
+    if has_measurable_rain || max_precip_prob >= 30 || has_light_code {
         return RainLevel::Light;
     }
 
@@ -308,7 +308,9 @@ mod tests {
         assert_eq!(classify_rain(0.0, 0.0, 10, &[1, 2, 3]), RainLevel::Dry);
         assert_eq!(classify_rain(0.0, 0.0, 18, &[80]), RainLevel::Dry);
         assert_eq!(classify_rain(0.5, 0.3, 40, &[51]), RainLevel::Light);
+        assert_eq!(classify_rain(0.5, 0.2, 28, &[61]), RainLevel::Light);
         assert_eq!(classify_rain(3.2, 1.4, 75, &[61]), RainLevel::Moderate);
+        assert_eq!(classify_rain(1.2, 0.6, 60, &[63]), RainLevel::Moderate);
         assert_eq!(classify_rain(9.0, 3.0, 85, &[63]), RainLevel::Heavy);
     }
 
