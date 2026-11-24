@@ -29,6 +29,23 @@ pub trait LadderTracker {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LadderPointsTransition {
+    SeasonReset,
+    PointDeduction,
+    Normal,
+}
+
+fn classify_points_transition(last_pts: i32, current_pts: i32) -> LadderPointsTransition {
+    if last_pts > 0 && current_pts == 0 {
+        LadderPointsTransition::SeasonReset
+    } else if current_pts < last_pts {
+        LadderPointsTransition::PointDeduction
+    } else {
+        LadderPointsTransition::Normal
+    }
+}
+
 /// Executes a single tracking cycle and returns the duration to sleep before the next cycle.
 pub fn run_tracker_step<T: LadderTracker>(tracker: &mut T, client: &Client) -> Duration {
     let custom_sleep = match tracker.on_poll_cycle(client) {
@@ -50,43 +67,57 @@ pub fn run_tracker_step<T: LadderTracker>(tracker: &mut T, client: &Client) -> D
                     let current_pts = extract_total_league_points(&current_ladder);
                     let last_pts = extract_total_league_points(&last_ladder);
 
-                    if current_pts < last_pts {
-                        log::warn!(
-                            "[{}] Administrative point deduction detected!",
-                            tracker.name()
-                        );
-                        let penalty_msg = "⚖️ **DÉCISION ADMINISTRATIVE :**\nUn retrait de points a été appliqué au classement !";
-                        let _ = send_discord_alert(client, penalty_msg);
-                        thread::sleep(Duration::from_secs(2));
-                    } else {
-                        let current_match =
-                            tracker.fetch_latest_match_result(client).unwrap_or(None);
-                        let last_match = load_state(tracker.match_state_filename());
+                    match classify_points_transition(last_pts, current_pts) {
+                        LadderPointsTransition::SeasonReset => {
+                            log::info!(
+                                "[{}] Nouvelle saison détectée (classement remis à 0). Réinitialisation silencieuse de l'état.",
+                                tracker.name()
+                            );
+                            let _ = save_state(tracker.state_filename(), &current_ladder);
+                            let _ = save_state(tracker.match_state_filename(), "");
+                            return sleep_duration;
+                        }
+                        LadderPointsTransition::PointDeduction => {
+                            log::warn!(
+                                "[{}] Administrative point deduction detected!",
+                                tracker.name()
+                            );
+                            let penalty_msg = "⚖️ **DÉCISION ADMINISTRATIVE :**\nUn retrait de points a été appliqué au classement !";
+                            let _ = send_discord_alert(client, penalty_msg);
+                            thread::sleep(Duration::from_secs(2));
+                        }
+                        LadderPointsTransition::Normal => {
+                            let current_match =
+                                tracker.fetch_latest_match_result(client).unwrap_or(None);
+                            let last_match = load_state(tracker.match_state_filename());
 
-                        if let Some(ref match_msg) = current_match {
-                            if match_msg == &last_match && !last_match.is_empty() {
-                                log::info!(
-                                    "[{}] ⏳ Classement modifié, mais aucun nouveau score détecté. On patiente...",
-                                    tracker.name()
-                                );
-                                return sleep_duration;
-                            }
-
-                            let mut has_new_match = false;
-
-                            for single_match in match_msg.split(MATCH_DELIMITER) {
-                                if !single_match.is_empty() && !last_match.contains(single_match) {
-                                    has_new_match = true;
-                                    let _ = send_discord_alert(client, single_match);
-                                    thread::sleep(Duration::from_secs(2));
+                            if let Some(ref match_msg) = current_match {
+                                if match_msg == &last_match && !last_match.is_empty() {
+                                    log::info!(
+                                        "[{}] ⏳ Classement modifié, mais aucun nouveau score détecté. On patiente...",
+                                        tracker.name()
+                                    );
+                                    return sleep_duration;
                                 }
-                            }
 
-                            if !has_new_match && !last_match.is_empty() {
-                                return sleep_duration;
-                            }
+                                let mut has_new_match = false;
 
-                            let _ = save_state(tracker.match_state_filename(), match_msg);
+                                for single_match in match_msg.split(MATCH_DELIMITER) {
+                                    if !single_match.is_empty()
+                                        && !last_match.contains(single_match)
+                                    {
+                                        has_new_match = true;
+                                        let _ = send_discord_alert(client, single_match);
+                                        thread::sleep(Duration::from_secs(2));
+                                    }
+                                }
+
+                                if !has_new_match && !last_match.is_empty() {
+                                    return sleep_duration;
+                                }
+
+                                let _ = save_state(tracker.match_state_filename(), match_msg);
+                            }
                         }
                     }
                 } else {
@@ -135,5 +166,34 @@ pub fn run_tracker_loop<T: LadderTracker>(mut tracker: T) {
             sleep_duration.as_secs()
         );
         thread::sleep(sleep_duration);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classify_points_transition() {
+        assert_eq!(
+            classify_points_transition(420, 0),
+            LadderPointsTransition::SeasonReset
+        );
+        assert_eq!(
+            classify_points_transition(420, 416),
+            LadderPointsTransition::PointDeduction
+        );
+        assert_eq!(
+            classify_points_transition(0, 2),
+            LadderPointsTransition::Normal
+        );
+        assert_eq!(
+            classify_points_transition(420, 422),
+            LadderPointsTransition::Normal
+        );
+        assert_eq!(
+            classify_points_transition(0, 0),
+            LadderPointsTransition::Normal
+        );
     }
 }
