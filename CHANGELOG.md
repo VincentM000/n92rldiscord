@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/VincentM000/n92rldiscord/compare/v0.2.1...v0.3.0) (2026-11-24)
+
+
+### Nouveautés (Features)
+
+* **weather-notifier:** send optional admin Discord alert on failure ([#28](https://github.com/VincentM000/n92rldiscord/issues/28)) ([7fc5771](https://github.com/VincentM000/n92rldiscord/commit/7fc57715de60c53935a5ae8a02e5eb9b71340805))
+
+
+### Corrections (Bug Fixes)
+
+* **weather-notifier:** classify slight rain codes (61/80) as light rain ([#26](https://github.com/VincentM000/n92rldiscord/issues/26)) ([79c109a](https://github.com/VincentM000/n92rldiscord/commit/79c109a2aac8c2896efc061a372718d5560979a1))
+
 ## [0.2.1](https://github.com/VincentM000/n92rldiscord/compare/v0.2.0...v0.2.1) (2026-11-24)
 
 
