@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/VincentM000/n92rldiscord/compare/v0.2.0...v0.2.1) (2026-11-24)
+
+
+### Corrections (Bug Fixes)
+
+* **polly:** hide Discord usernames, improve calendar routing and fix Touch tournament date         ([#11](https://github.com/VincentM000/n92rldiscord/issues/11)) ([02f9bed](https://github.com/VincentM000/n92rldiscord/commit/02f9bedf11e7740544902a1fe3542bf30588d575))
+* **weather-notifier:** retry transient Open-Meteo errors and add timer jitter ([#22](https://github.com/VincentM000/n92rldiscord/issues/22)) ([2274528](https://github.com/VincentM000/n92rldiscord/commit/2274528f28e0f58340abdfc71a86538031af886b))
+
 ## [0.2.0](https://github.com/VincentM000/n92rldiscord/compare/v0.1.0...v0.2.0) (2026-11-20)
 
 
