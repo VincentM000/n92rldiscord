@@ -1,0 +1,9 @@
+[Unit]
+Description=Run weather-notifier every day at 19:00 Europe/Paris
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 Europe/Paris
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -19,6 +19,9 @@ on:
       - main
       - develop
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -29,9 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate Gitflow source -> target branch
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
         run: |
-          BASE="${{ github.base_ref }}"
-          HEAD="${{ github.head_ref }}"
           echo "PR: $HEAD -> $BASE"
 
           if [ "$BASE" = "main" ]; then
@@ -41,8 +45,8 @@ jobs:
               exit 1
             fi
           elif [ "$BASE" = "develop" ]; then
-            if ! echo "$HEAD" | grep -Eq '^(feat|fix|refactor|docs|test|chore|perf|ci|hotfix)/[a-z0-9-]+$'; then
-              echo "❌ Gitflow violation: PRs targeting 'develop' must come from a valid '<type>/<kebab-case>' branch."
+            if ! echo "$HEAD" | grep -Eq '^(main|(feat|fix|refactor|docs|test|chore|perf|ci|hotfix|dependabot)/[a-z0-9._/-]+)$'; then
+              echo "❌ Gitflow violation: PRs targeting 'develop' must come from 'main' (sync) or a valid '<type>/<kebab-case>' branch."
               exit 1
             fi
           fi
