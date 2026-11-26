@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/root/n92rldiscord
+User=vincent
+WorkingDirectory=/home/vincent/n92rldiscord
 Environment="RUST_LOG=info"
-ExecStart=/root/n92rldiscord/target/release/super-xiii-tracker
+ExecStart=/home/vincent/n92rldiscord/target/release/super-xiii-tracker
 Restart=always
 RestartSec=10
 
