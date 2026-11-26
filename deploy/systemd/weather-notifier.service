@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=root
-WorkingDirectory=/root/n92rldiscord
+User=pirates
+Group=pirates
+WorkingDirectory=/opt/n92rldiscord
 Environment="RUST_LOG=info"
-ExecStart=/root/n92rldiscord/target/release/weather-notifier
+ExecStart=/opt/n92rldiscord/target/release/weather-notifier
